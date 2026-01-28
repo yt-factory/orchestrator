@@ -75,14 +75,14 @@ export class WorkflowManager {
       assets: {},
       meta: {
         stale_recovery_count: 0,
-        model_used: 'gemini-2.0-pro',
+        model_used: 'gemini-3-pro',
         is_fallback_mode: false,
         cost: {
           total_tokens_used: 0,
           tokens_by_model: {
-            'gemini-2.0-pro': 0,
-            'gemini-2.0-flash': 0,
-            'gemini-1.5-flash': 0
+            'gemini-3-pro': 0,
+            'gemini-3-flash': 0,
+            'gemini-2.5-flash': 0
           },
           estimated_cost_usd: 0,
           api_calls_count: 0

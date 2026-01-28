@@ -7,11 +7,11 @@ import { CostTracker } from '../utils/cost-tracker';
 import { logger } from '../utils/logger';
 import { withRetry } from '../utils/retry';
 
-// Fallback 模型链
+// Fallback 模型链 (Gemini 3 series - January 2026)
 const MODEL_FALLBACK_CHAIN = [
-  'gemini-2.0-pro',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash'
+  'gemini-3-pro',
+  'gemini-3-flash',
+  'gemini-2.5-flash'
 ] as const;
 
 type ModelName = (typeof MODEL_FALLBACK_CHAIN)[number];

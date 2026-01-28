@@ -35,9 +35,9 @@ class Logger {
     };
 
     // 确保 projectId 总是在前面
-    const { projectId, ...rest } = entry;
+    const { projectId, timestamp, level: entryLevel, message: entryMsg, ...rest } = entry;
     const output = projectId
-      ? { timestamp: entry.timestamp, level, projectId, message, ...rest }
+      ? { timestamp, level: entryLevel, projectId, message: entryMsg, ...rest }
       : entry;
 
     const line = JSON.stringify(output);

@@ -135,16 +135,84 @@ export const ShortsExtractionSchema = z.object({
 });
 
 // ============================================
+// 原创性评分 (Originality Validation)
+// ============================================
+
+export const OriginalityScoreSchema = z.object({
+  visual_text_match: z.number().min(0).max(1),
+  semantic_uniqueness: z.number().min(0).max(1),
+  style_fingerprint: z.string(),
+  overall_score: z.number().min(0).max(1),
+  is_original: z.boolean(),
+  warnings: z.array(z.string()),
+  suggestions: z.array(z.string())
+});
+
+// ============================================
+// 变现信息 (Monetization)
+// ============================================
+
+export const MonetizationInfoSchema = z.object({
+  ad_suitability_score: z.number().min(0).max(100),
+  ad_suitability_level: z.enum(['safe', 'moderate', 'risky', 'blocked']),
+  estimated_cpm_range: z.tuple([z.number(), z.number()]),
+  safe_regions: z.array(z.string()),
+  blocked_regions: z.array(z.string()),
+  optimization_applied: z.boolean()
+});
+
+// ============================================
+// 内容日历 (Content Planning)
+// ============================================
+
+export const ContentPlanSchema = z.object({
+  topic: z.string(),
+  scheduled_date: z.string().datetime(),
+  quarter: z.enum(['Q1', 'Q2', 'Q3', 'Q4']),
+  content_type: z.enum(['evergreen', 'trending', 'commercial', 'mixed']),
+  priority: z.enum(['high', 'medium', 'low']),
+  seasonal_angle: z.string().optional(),
+  estimated_cpm_multiplier: z.number().default(1)
+});
+
+// ============================================
+// AIO 扩展 FAQ (Extended FAQ with AIO)
+// ============================================
+
+export const ExtendedFAQItemSchema = FAQItemSchema.extend({
+  timestamp: z.string().optional(),
+  schema_markup: z.record(z.string(), z.unknown()).optional()
+});
+
+// ============================================
+// Shorts 候选 (Emotion-based)
+// ============================================
+
+export const ShortsCandidateSchema = z.object({
+  start_time: z.number(),
+  end_time: z.number(),
+  emotion: z.enum(['controversy', 'fomo', 'curiosity', 'anger', 'awe', 'surprise', 'humor']),
+  controversy_score: z.number().min(0).max(10),
+  hook_strength: z.number().min(0).max(10),
+  recommended_cta: z.string(),
+  transcript_snippet: z.string()
+});
+
+// ============================================
 // 成本追踪 (Cost Awareness)
 // ============================================
 
 export const CostTrackingSchema = z.object({
   total_tokens_used: z.number().default(0),
   tokens_by_model: z.object({
-    'gemini-2.0-pro': z.number().default(0),
-    'gemini-2.0-flash': z.number().default(0),
-    'gemini-1.5-flash': z.number().default(0)
-  }).default({}),
+    'gemini-3-pro': z.number().default(0),
+    'gemini-3-flash': z.number().default(0),
+    'gemini-2.5-flash': z.number().default(0)
+  }).default({
+    'gemini-3-pro': 0,
+    'gemini-3-flash': 0,
+    'gemini-2.5-flash': 0
+  }),
   estimated_cost_usd: z.number().default(0),
   api_calls_count: z.number().default(0)
 });
@@ -203,15 +271,44 @@ export const ProjectManifestSchema = z.object({
     fallback_model_used: z.string().optional()
   }).optional(),
 
+  // 变现信息
+  monetization: MonetizationInfoSchema.optional(),
+
+  // 原创性评分
+  originality: OriginalityScoreSchema.optional(),
+
   // 运维元数据
   meta: z.object({
     stale_recovery_count: z.number().default(0),
     processing_time_ms: z.number().optional(),
-    model_used: z.string().default('gemini-2.0-pro'),
+    model_used: z.string().default('gemini-3-pro'),
     is_fallback_mode: z.boolean().default(false),
     trends_authority_score: z.number().min(0).max(100).optional(),
-    cost: CostTrackingSchema.default({})
-  }).default({})
+    cost: CostTrackingSchema.default({
+      total_tokens_used: 0,
+      tokens_by_model: {
+        'gemini-3-pro': 0,
+        'gemini-3-flash': 0,
+        'gemini-2.5-flash': 0
+      },
+      estimated_cost_usd: 0,
+      api_calls_count: 0
+    })
+  }).default({
+    stale_recovery_count: 0,
+    model_used: 'gemini-3-pro',
+    is_fallback_mode: false,
+    cost: {
+      total_tokens_used: 0,
+      tokens_by_model: {
+        'gemini-3-pro': 0,
+        'gemini-3-flash': 0,
+        'gemini-2.5-flash': 0
+      },
+      estimated_cost_usd: 0,
+      api_calls_count: 0
+    }
+  })
 });
 
 // Type exports
@@ -223,3 +320,8 @@ export type ShortsHook = z.infer<typeof ShortsHookSchema>;
 export type MediaPreference = z.infer<typeof MediaPreferenceSchema>;
 export type TrendKeyword = z.infer<typeof TrendKeywordSchema>;
 export type CostTracking = z.infer<typeof CostTrackingSchema>;
+export type OriginalityScore = z.infer<typeof OriginalityScoreSchema>;
+export type MonetizationInfo = z.infer<typeof MonetizationInfoSchema>;
+export type ContentPlan = z.infer<typeof ContentPlanSchema>;
+export type ExtendedFAQItem = z.infer<typeof ExtendedFAQItemSchema>;
+export type ShortsCandidate = z.infer<typeof ShortsCandidateSchema>;

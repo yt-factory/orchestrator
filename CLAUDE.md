@@ -32,7 +32,7 @@
 │   └─────────────────────────────────────────────────────────────┘    │
 │                              │                                        │
 │                              ▼                                        │
-│   [orchestrator] ──MCP──> [mcp-gateway] ──> Gemini Pro/Flash         │
+│   [orchestrator] ──MCP──> [mcp-gateway] ──> Gemini 3 Pro/Flash       │
 │        │                       │                                      │
 │        │                       ├──> Google Trends API                 │
 │        │                       └──> ElevenLabs / Google TTS           │
@@ -42,7 +42,7 @@
 │   [video-renderer] ──> MP4 + Shorts (9:16) ──> YouTube Data API      │
 │                                                                       │
 │   ┌─────────────────────────────────────────────────────────────┐    │
-│   │  Fallback Chain: Pro (3x) → Flash (3x) → 1.5-Flash (3x)     │    │
+│   │  Fallback Chain: 3-Pro (3x) → 3-Flash (3x) → 2.5-Flash (3x) │    │
 │   │  + Prompt Simplification on Fallback Mode                    │    │
 │   └─────────────────────────────────────────────────────────────┘    │
 │                                                                       │
@@ -257,9 +257,9 @@ export const ShortsExtractionSchema = z.object({
 export const CostTrackingSchema = z.object({
   total_tokens_used: z.number().default(0),
   tokens_by_model: z.object({
-    'gemini-2.0-pro': z.number().default(0),
-    'gemini-2.0-flash': z.number().default(0),
-    'gemini-1.5-flash': z.number().default(0)
+    'gemini-3-pro': z.number().default(0),
+    'gemini-3-flash': z.number().default(0),
+    'gemini-2.5-flash': z.number().default(0)
   }).default({}),
   estimated_cost_usd: z.number().default(0),
   api_calls_count: z.number().default(0)
@@ -323,7 +323,7 @@ export const ProjectManifestSchema = z.object({
   meta: z.object({
     stale_recovery_count: z.number().default(0),
     processing_time_ms: z.number().optional(),
-    model_used: z.string().default('gemini-2.0-pro'),
+    model_used: z.string().default('gemini-3-pro'),
     is_fallback_mode: z.boolean().default(false),  // NEW
     trends_authority_score: z.number().min(0).max(100).optional(),
     cost: CostTrackingSchema.default({})  // NEW
@@ -604,14 +604,14 @@ export class WorkflowManager {
       assets: {},
       meta: {
         stale_recovery_count: 0,
-        model_used: 'gemini-2.0-pro',
+        model_used: 'gemini-3-pro',
         is_fallback_mode: false,
         cost: {
           total_tokens_used: 0,
           tokens_by_model: {
-            'gemini-2.0-pro': 0,
-            'gemini-2.0-flash': 0,
-            'gemini-1.5-flash': 0
+            'gemini-3-pro': 0,
+            'gemini-3-flash': 0,
+            'gemini-2.5-flash': 0
           },
           estimated_cost_usd: 0,
           api_calls_count: 0
@@ -727,9 +727,9 @@ import { withRetry } from '../utils/retry';
 
 // Fallback 模型链
 const MODEL_FALLBACK_CHAIN = [
-  'gemini-2.0-pro',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash'
+  'gemini-3-pro',
+  'gemini-3-flash',
+  'gemini-2.5-flash'
 ] as const;
 
 type ModelName = typeof MODEL_FALLBACK_CHAIN[number];
@@ -1525,9 +1525,9 @@ import { CostTracking } from '../core/manifest';
 
 // 2026 估算价格 (per 1M tokens)
 const TOKEN_PRICES_USD: Recorring, number> = {
-  'gemini-2.0-pro': 3.50,
-  'gemini-2.0-flash': 0.35,
-  'gemini-1.5-flash': 0.10
+  'gemini-3-pro': 3.50,
+  'gemini-3-flash': 0.35,
+  'gemini-2.5-flash': 0.10
 };
 
 const PERSIST_PATH = './data/cost_report.json';
@@ -1536,9 +1536,9 @@ export class CostTracker {
   private data: CostTracking = {
     total_tokens_used: 0,
     tokens_by_model: {
-      'gemini-2.0-pro': 0,
-      'gemini-2.0-flash': 0,
-      'gemini-1.5-flash': 0
+      'gemini-3-pro': 0,
+      'gemini-3-flash': 0,
+      'gemini-2.5-flash': 0
     },
     estimated_cost_usd: 0,
     api_calls_count: 0
@@ -1573,9 +1573,9 @@ export class CostTracker {
     return {
       total_tokens_used: 0,
       tokens_by_model: {
-        'gemini-2.0-pro': 0,
-        'gemini-2.0-flash': 0,
-        'gemini-1.5-flash': 0
+        'gemini-3-pro': 0,
+        'gemini-3-flash': 0,
+        'gemini-2.5-flash': 0
       },
       estimated_cost_usd: 0,
       api_calls_count: 0

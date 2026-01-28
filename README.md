@@ -24,7 +24,7 @@ Priority Queue → Token Bucket (60 req/min) → Connection Pool → Gemini
 ### Fallback Chain
 
 ```
-gemini-2.0-pro (3x) → gemini-2.0-flash (3x) → gemini-1.5-flash (3x)
+gemini-3-pro (3x) → gemini-3-flash (3x) → gemini-2.5-flash (3x)
 + automatic prompt simplification on fallback
 ```
 

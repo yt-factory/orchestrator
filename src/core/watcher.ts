@@ -1,4 +1,4 @@
-import chokidar from 'chokidar';
+import chokidar, { type FSWatcher } from 'chokidar';
 import { readFile, rename, mkdir } from 'fs/promises';
 import { join, basename } from 'path';
 import { logger } from '../utils/logger';
@@ -23,7 +23,7 @@ interface WatcherEvents {
 }
 
 export class FolderWatcher {
-  private watcher: chokidar.FSWatcher | null = null;
+  private watcher: FSWatcher | null = null;
   private pendingFiles: Map<string, NodeJS.Timeout> = new Map();
 
   constructor(
@@ -44,8 +44,8 @@ export class FolderWatcher {
       }
     });
 
-    this.watcher.on('add', (filePath) => this.handleFileAdd(filePath));
-    this.watcher.on('error', (error) => this.events.onError(error));
+    this.watcher.on('add', (filePath: string) => this.handleFileAdd(filePath));
+    this.watcher.on('error', (error: unknown) => this.events.onError(error instanceof Error ? error : new Error(String(error))));
 
     logger.info('FolderWatcher started', {
       dir: this.config.incomingDir,

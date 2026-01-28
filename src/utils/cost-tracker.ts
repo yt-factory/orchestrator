@@ -1,11 +1,11 @@
 import { writeFile, readFile } from 'fs/promises';
 import type { CostTracking } from '../core/manifest';
 
-// 2026 估算价格 (per 1M tokens)
+// 2026 估算价格 (per 1M tokens) - Gemini 3 series
 const TOKEN_PRICES_USD: Record<string, number> = {
-  'gemini-2.0-pro': 3.50,
-  'gemini-2.0-flash': 0.35,
-  'gemini-1.5-flash': 0.10
+  'gemini-3-pro': 5.00,
+  'gemini-3-flash': 0.50,
+  'gemini-2.5-flash': 0.15
 };
 
 const PERSIST_PATH = './data/cost_report.json';
@@ -14,9 +14,9 @@ export class CostTracker {
   private data: CostTracking = {
     total_tokens_used: 0,
     tokens_by_model: {
-      'gemini-2.0-pro': 0,
-      'gemini-2.0-flash': 0,
-      'gemini-1.5-flash': 0
+      'gemini-3-pro': 0,
+      'gemini-3-flash': 0,
+      'gemini-2.5-flash': 0
     },
     estimated_cost_usd: 0,
     api_calls_count: 0
@@ -59,9 +59,9 @@ export class CostTracker {
     return {
       total_tokens_used: 0,
       tokens_by_model: {
-        'gemini-2.0-pro': 0,
-        'gemini-2.0-flash': 0,
-        'gemini-1.5-flash': 0
+        'gemini-3-pro': 0,
+        'gemini-3-flash': 0,
+        'gemini-2.5-flash': 0
       },
       estimated_cost_usd: 0,
       api_calls_count: 0
