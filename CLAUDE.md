@@ -81,6 +81,18 @@ orchestrator/
 │   │   ├── trends-hook.ts      # Google Trends (Authority 分级 + 衰减)
 │   │   ├── shorts-extractor.ts # Shorts 提取 (情绪弧度 + CTA 注入)
 │   │   └── voice-matcher.ts    # Voice Persona 推荐
+│   ├── validators/              # Part 2: 内容验证模块
+│   │   └── originality-checker.ts  # 原创性检测 (视觉80% + 语义70% + 风格指纹)
+│   ├── shorts/                  # Part 2: Shorts 高级提取
+│   │   └── emotion-extractor.ts    # 情感弧度提取 (7种情绪 + 病毒潜力评分)
+│   ├── seo/                     # Part 2: SEO 高级优化
+│   │   ├── faq-generator.ts        # AIO优化FAQ生成 (6种AIO模式 + Schema.org)
+│   │   └── regional-optimizer.ts   # 多区域SEO (6市场 + CPM优先级)
+│   ├── planning/                # Part 2: 内容规划
+│   │   └── seasonal-planner.ts     # 季度规划 (Q4峰值 2.5x CPM)
+│   ├── services/                # Part 2: 变现服务
+│   │   ├── monetization-optimizer.ts  # 广告适配预评分 (5维风险分析)
+│   │   └── aio-feedback-loop.ts       # AIO引用性能学习 (持久化ML)
 │   ├── infra/
 │   │   ├── token-bucket.ts     # Rate Limiting
 │   │   ├── priority-queue.ts   # 请求优先级队列
@@ -96,6 +108,7 @@ orchestrator/
 ├── active_projects/             # 活跃项目目录 (手动创建)
 ├── data/
 │   ├── trends_authority.json   # 热词权威性持久化
+│   ├── aio_feedback.json       # AIO引用学习数据
 │   └── cost_report.json        # Token 成本追踪
 ├── .env
 ├── package.json
@@ -1841,4 +1854,124 @@ main().catch((error) => {
 - [ ] Warm-up 成功？
 - [ ] Heartbeat 正常运行？
 - [ ] 无 unhandled rejection？
+
+---
+
+## 📚 Session Learnings (Jan 2026)
+
+### Commit History Summary
+
+| Commit | Description |
+|--------|-------------|
+| `050157e` | Part 2 orchestrator modules + Gemini 3 series upgrade (20 files, +2,885 lines) |
+| `c527c50` | README project architecture documentation |
+| `ff5d41e` | Initial implementation (24 files, +4,344 lines) |
+| `58fbb6c` | Repository initialization |
+
+### Gemini 3 Model Migration
+
+**Model Fallback Chain (2026):**
+```
+gemini-3-pro (3x) → gemini-3-flash (3x) → gemini-2.5-flash (3x)
+```
+
+**Token Pricing (per 1M tokens):**
+| Model | Price USD |
+|-------|-----------|
+| gemini-3-pro | $5.00 |
+| gemini-3-flash | $0.50 |
+| gemini-2.5-flash | $0.15 |
+
+**Files Updated for Migration:**
+- `src/agents/gemini-client.ts` - MODEL_FALLBACK_CHAIN
+- `src/core/manifest.ts` - CostTrackingSchema defaults
+- `src/core/workflow.ts` - Project creation defaults
+- `src/utils/cost-tracker.ts` - TOKEN_PRICES_USD + getForProject()
+
+### Part 2 Modules Implemented
+
+| Module | Purpose | Key Features |
+|--------|---------|--------------|
+| `originality-checker.ts` | Content duplication prevention | 3-layer validation: visual 80%, semantic 70%, style fingerprinting |
+| `emotion-extractor.ts` | Viral Shorts identification | 4-stage pipeline for 7 emotion types, viral potential scoring |
+| `faq-generator.ts` | Google AI Overview optimization | 6 AIO patterns + Schema.org JSON-LD markup |
+| `regional-optimizer.ts` | Global market targeting | 6 regions with CPM-based prioritization ($4-$15) |
+| `seasonal-planner.ts` | Revenue-aware scheduling | Quarterly strategies, Q4 peak events (2.5x CPM) |
+| `monetization-optimizer.ts` | Ad suitability pre-scoring | 5-dimension risk analysis, brand-safe keyword replacement |
+| `aio-feedback-loop.ts` | Citation performance learning | ML from AIO citations with persistent storage |
+
+### TypeScript Strict Mode Patterns
+
+**Gotcha #1: Zod v3 z.record() requires two parameters**
+```typescript
+// ❌ Wrong - only value type
+z.record(z.unknown())
+
+// ✅ Correct - key type and value type
+z.record(z.string(), z.unknown())
+```
+
+**Gotcha #2: Nested Zod defaults need complete structure**
+```typescript
+// ❌ Wrong - empty object default
+tokens_by_model: z.object({
+  'gemini-3-pro': z.number().default(0),
+  'gemini-3-flash': z.number().default(0),
+}).default({})
+
+// ✅ Correct - complete default object
+tokens_by_model: z.object({
+  'gemini-3-pro': z.number().default(0),
+  'gemini-3-flash': z.number().default(0),
+}).default({
+  'gemini-3-pro': 0,
+  'gemini-3-flash': 0,
+})
+```
+
+**Gotcha #3: Null safety for array indexing with noUncheckedIndexedAccess**
+```typescript
+// ❌ Wrong - array[index] returns T | undefined
+const topic = topics[topicIndex];
+processTopic(topic); // Error: string | undefined not assignable to string
+
+// ✅ Correct - nullish coalescing fallback
+const topic = topics[topicIndex] ?? '';
+processTopic(topic);
+
+// ✅ Also correct - double fallback for nested lookups
+const angle = SEASONAL_ANGLES[quarter]?.[contentType] ?? SEASONAL_ANGLES[quarter]?.default ?? '';
+```
+
+**Gotcha #4: Chokidar FSWatcher type import**
+```typescript
+// ❌ Wrong - using namespace
+private watcher: chokidar.FSWatcher | null = null;
+
+// ✅ Correct - import type directly
+import type { FSWatcher } from 'chokidar';
+private watcher: FSWatcher | null = null;
+```
+
+**Gotcha #5: Explicit event handler types**
+```typescript
+// ❌ Wrong - untyped parameters
+this.watcher.on('error', (error) => { ... });
+
+// ✅ Correct - explicit Error type
+this.watcher.on('error', (error: Error) => { ... });
+```
+
+### Error Resolution Summary
+
+Total errors fixed in Part 2 session: **22**
+
+| Category | Count | Fix Pattern |
+|----------|-------|-------------|
+| Zod schema defaults | 4 | Complete nested default objects |
+| Null safety (seasonal-planner) | 5 | Nullish coalescing for array access |
+| Null safety (regional-optimizer) | 2 | Empty array fallbacks for lookups |
+| Null safety (emotion-extractor) | 5 | Null guards + CTA option fallbacks |
+| Chokidar types (watcher.ts) | 3 | Direct type imports + explicit annotations |
+| Logger properties (logger.ts) | 3 | Explicit destructuring to avoid duplication |
 
