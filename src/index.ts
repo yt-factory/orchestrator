@@ -10,6 +10,7 @@ import { logger } from './utils/logger';
 import { safeJsonParse } from './utils/json-parse';
 import { fileHashManager } from './core/file-hash-manager';
 import { modelDegradation } from './services/model-degradation';
+import { ProgressTracker, ProcessingStage } from './core/processing-stages';
 
 async function main() {
   logger.info('YT-Factory Orchestrator starting...');
@@ -140,25 +141,40 @@ async function processProject(
   geminiClient: GeminiClient,
   trendsHook: TrendsHook
 ): Promise<void> {
-  const startTime = Date.now();
   const startTokens = geminiClient.getTokenSnapshot();
 
+  // Load manifest first to get traceId for progress tracker
+  const manifest = await workflowManager.loadManifest(projectId);
+  const traceId = manifest.meta.trace_id;
+  const rawContent = manifest.input_source.raw_content;
+  const wordCount = manifest.input_source.word_count;
+  const language = manifest.input_source.detected_language ?? 'en';
+
+  // Initialize progress tracker
+  const progress = new ProgressTracker(projectId, traceId);
+  progress.logPipelineStart(wordCount, language);
+
   try {
+    // ============================================
+    // Stage 1: Initialization
+    // ============================================
+    progress.startStage(ProcessingStage.INIT);
+
     // pending -> analyzing
     await workflowManager.transitionState(projectId, 'analyzing');
-    const manifest = await workflowManager.loadManifest(projectId);
-    const rawContent = manifest.input_source.raw_content;
 
     // Get current model config for potential degraded prompt
     const modelConfig = workflowManager.getModelConfig(manifest);
-    const traceId = manifest.meta.trace_id;
 
-    logger.debug('Processing with model', {
-      projectId,
-      traceId,
+    progress.completeStage(ProcessingStage.INIT, {
       model: modelConfig.name,
       isDegraded: manifest.meta.is_degraded
     });
+
+    // ============================================
+    // Stage 2: Script Generation
+    // ============================================
+    progress.startStage(ProcessingStage.SCRIPT_GENERATION);
 
     // Build script generation prompt
     let scriptPrompt = `You are a professional YouTube scriptwriter. Convert this content into a video script with timestamps.
@@ -195,24 +211,61 @@ ${rawContent}`;
     const script = scriptData.script ?? [];
     const estimated_duration_seconds = scriptData.estimated_duration_seconds ?? 60;
 
-    // 生成 SEO
-    const seoData = await generateMultiLangSEO(rawContent, projectId, geminiClient, trendsHook);
+    progress.completeStage(ProcessingStage.SCRIPT_GENERATION, {
+      segmentCount: script.length,
+      durationSec: estimated_duration_seconds,
+      tokensUsed: scriptResult.tokensUsed,
+      model: scriptResult.modelUsed
+    });
 
-    // 提取 Shorts
+    // ============================================
+    // Stage 3-4: Trend Analysis + SEO Generation
+    // ============================================
+    progress.startStage(ProcessingStage.TREND_ANALYSIS);
+    // Note: generateMultiLangSEO internally handles both trend analysis and SEO generation
+    const seoData = await generateMultiLangSEO(rawContent, projectId, geminiClient, trendsHook);
+    progress.completeStage(ProcessingStage.SEO_GENERATION, {
+      trendCoverage: seoData.trend_coverage_score,
+      faqCount: seoData.faq_structured_data.length,
+      regionalSeoCount: seoData.regional_seo.length
+    });
+
+    // ============================================
+    // Stage 5: Shorts Extraction
+    // ============================================
+    progress.startStage(ProcessingStage.SHORTS_EXTRACTION);
     const shortsData = await extractShortsHooks(script, projectId, geminiClient);
+    progress.completeStage(ProcessingStage.SHORTS_EXTRACTION, {
+      hooksCount: shortsData.hooks.length,
+      topEmotion: shortsData.hooks[0]?.emotional_trigger,
+      cropFocus: shortsData.vertical_crop_focus
+    });
+
+    // ============================================
+    // Stage 6: Voice Matching
+    // ============================================
+    progress.startStage(ProcessingStage.VOICE_MATCHING);
+    const mood = 'professional' as const;
+    const contentType = 'tutorial' as const;
+    const voice = matchVoice(mood, contentType, language);
+    progress.completeStage(ProcessingStage.VOICE_MATCHING, {
+      provider: voice?.provider,
+      style: voice?.style
+    });
+
+    // ============================================
+    // Stage 7: Manifest Update
+    // ============================================
+    progress.startStage(ProcessingStage.MANIFEST_UPDATE);
 
     // Calculate tokens used for this project
     const endTokens = geminiClient.getTokenSnapshot();
     const projectTokensUsed = endTokens - startTokens;
     const globalCost = geminiClient.getCostReport();
+    const pipelineElapsedMs = progress.getElapsedMs();
 
     // 更新 manifest
     await workflowManager.updateManifest(projectId, (m) => {
-      const mood = 'professional' as const;
-      const contentType = 'tutorial' as const;
-      const language = manifest.input_source.detected_language ?? 'en';
-      const voice = matchVoice(mood, contentType, language);
-
       m.content_engine = {
         script,
         seo: seoData,
@@ -223,7 +276,7 @@ ${rawContent}`;
           voice
         }
       };
-      m.meta.processing_time_ms = Date.now() - startTime;
+      m.meta.processing_time_ms = pipelineElapsedMs;
       m.meta.model_used = scriptResult.modelUsed;
       m.meta.is_fallback_mode = scriptResult.isFallbackMode;
 
@@ -236,21 +289,36 @@ ${rawContent}`;
       m.meta.cost.estimated_cost_usd = (projectTokensUsed / 1_000_000) * pricePerMillion;
     });
 
+    progress.completeStage(ProcessingStage.MANIFEST_UPDATE, {
+      tokensUsed: projectTokensUsed,
+      estimatedCostUsd: (projectTokensUsed / 1_000_000) * (scriptResult.modelUsed.includes('pro') ? 5.0 : 0.5)
+    });
+
+    // ============================================
+    // Stage 8: Finalization
+    // ============================================
+    progress.startStage(ProcessingStage.FINALIZATION);
+
     // analyzing -> rendering
     await workflowManager.transitionState(projectId, 'rendering');
 
     // Mark file as processed for duplicate detection
     await workflowManager.markFileAsProcessed(projectId);
 
-    logger.info('Project analysis complete', {
-      projectId,
-      processingTimeMs: Date.now() - startTime,
+    progress.completeStage(ProcessingStage.FINALIZATION);
+
+    // Log pipeline completion summary
+    progress.logPipelineComplete({
       modelUsed: scriptResult.modelUsed,
+      tokensUsed: projectTokensUsed,
       trendCoverage: seoData.trend_coverage_score,
       shortsCount: shortsData.hooks.length,
       isDegraded: manifest.meta.is_degraded
     });
+
   } catch (error) {
+    // Log pipeline error with stage context
+    progress.logPipelineError(ProcessingStage.SCRIPT_GENERATION, error as Error);
     // Use new intelligent error handling with degradation support
     await workflowManager.handleError(projectId, error as Error, 'analyzing');
   }

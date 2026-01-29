@@ -5,6 +5,7 @@ import { ProjectManifest, ProjectManifestSchema, ErrorFingerprint } from './mani
 import { logger } from '../utils/logger';
 import { modelDegradation, type ModelConfig } from '../services/model-degradation';
 import { fileHashManager } from './file-hash-manager';
+import { formatStateTransition } from './processing-stages';
 
 type Status = ProjectManifest['status'];
 
@@ -166,7 +167,14 @@ export class WorkflowManager {
 
     await this.saveManifest(projectId, manifest);
 
-    logger.info('State transition', { projectId, from: currentStatus, to: newStatus });
+    // Enhanced state transition logging with emoji and phase name
+    const transitionMsg = formatStateTransition(currentStatus, newStatus);
+    logger.info(`State: ${transitionMsg}`, {
+      projectId,
+      from: currentStatus,
+      to: newStatus,
+      traceId: manifest.meta.trace_id
+    });
   }
 
   async updateManifest(
