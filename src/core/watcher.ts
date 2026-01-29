@@ -38,8 +38,9 @@ export class FolderWatcher {
     this.watcher = chokidar.watch(this.config.incomingDir, {
       ignored: [
         /(^|[\/\\])\../, // 忽略隐藏文件
-        '**/processed/**' // 忽略 processed 子目录
+        '**/processed/**' // 忽略 processed 子目录 (backup safety)
       ],
+      depth: 0, // Only watch top level - prevents subdirectory detection
       persistent: true,
       awaitWriteFinish: {
         stabilityThreshold: this.config.stabilityDelayMs,
@@ -72,6 +73,12 @@ export class FolderWatcher {
   }
 
   private async handleFileAdd(filePath: string): Promise<void> {
+    // Safety check: ignore any files in processed directories (belt-and-suspenders)
+    if (filePath.includes('/processed/') || filePath.includes('\\processed\\')) {
+      logger.debug('Ignoring file in processed directory', { filePath });
+      return;
+    }
+
     const ext = filePath.toLowerCase();
     if (!ext.endsWith('.md') && !ext.endsWith('.txt') && !ext.endsWith('.markdown')) {
       return;

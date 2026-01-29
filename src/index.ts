@@ -49,7 +49,7 @@ async function main() {
   const watcher = new FolderWatcher(
     {
       incomingDir: './incoming',
-      processedDir: './incoming/processed',
+      processedDir: './processed',  // Outside incoming to prevent duplicate detection
       stabilityDelayMs: 2000
     },
     {
