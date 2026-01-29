@@ -5,6 +5,17 @@ import { CostTracker } from '../utils/cost-tracker';
 import { logger } from '../utils/logger';
 import { withRetry } from '../utils/retry';
 
+/**
+ * Clean JSON response from Gemini that may be wrapped in markdown code blocks.
+ * Gemini often returns JSON wrapped like: ```json\n{...}\n```
+ */
+function cleanJsonResponse(rawText: string): string {
+  return rawText
+    .replace(/^```(?:json)?\s*\n?/, '') // Remove opening ```json or ```
+    .replace(/\n?```\s*$/, '')           // Remove closing ```
+    .trim();
+}
+
 // Fallback model chain (Gemini 3 series - January 2026)
 // Model names are configurable via environment variables (preview naming convention)
 const MODEL_FALLBACK_CHAIN = [
@@ -201,11 +212,14 @@ export class GeminiClient {
   ): Promise<{ text: string; tokensUsed: number }> {
     const result = await model.generateContent(prompt);
     const response = result.response;
-    const text = response.text();
+    const rawText = response.text();
 
-    if (!text) {
+    if (!rawText) {
       throw new Error('Empty response from Gemini');
     }
+
+    // Clean markdown code block wrappers from JSON responses
+    const text = cleanJsonResponse(rawText);
 
     // Get token count from usage metadata if available
     const usageMetadata = response.usageMetadata;
@@ -327,6 +341,20 @@ IMPORTANT: Please respond in a clear, straightforward manner.
 
   getCostReport() {
     return this.costTracker.getReport();
+  }
+
+  /**
+   * Get a snapshot of current total tokens used (for calculating deltas)
+   */
+  getTokenSnapshot(): number {
+    return this.costTracker.getReport().total_tokens_used;
+  }
+
+  /**
+   * Get the cost tracker for per-project cost recording
+   */
+  getCostTracker() {
+    return this.costTracker;
   }
 
   async drain(): Promise<void> {

@@ -81,18 +81,18 @@ export class TrendsHook {
     const existing = this.cache.get(keyword);
 
     if (existing) {
-      const hoursSinceLastUpdate =
+      // Calculate decay_risk BEFORE updating lastSeen
+      const hoursSinceLastSeen =
         (now.getTime() - existing.lastSeen.getTime()) / (1000 * 60 * 60);
+      const decayRisk = hoursSinceLastSeen > DECAY_THRESHOLD_HOURS / 2;
 
-      if (hoursSinceLastUpdate >= CACHE_TTL_HOURS) {
+      // Now update lastSeen and consecutiveWindows
+      if (hoursSinceLastSeen >= CACHE_TTL_HOURS) {
         existing.consecutiveWindows += 1;
       }
       existing.lastSeen = now;
 
       this.cache.set(keyword, existing);
-
-      const hoursSinceLastSeen =
-        (now.getTime() - existing.lastSeen.getTime()) / (1000 * 60 * 60);
 
       return {
         keyword,
@@ -100,7 +100,7 @@ export class TrendsHook {
         consecutive_windows: existing.consecutiveWindows,
         first_seen: existing.firstSeen.toISOString(),
         last_seen: existing.lastSeen.toISOString(),
-        decay_risk: hoursSinceLastSeen > DECAY_THRESHOLD_HOURS / 2
+        decay_risk: decayRisk
       };
     }
 

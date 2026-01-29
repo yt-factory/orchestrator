@@ -23,15 +23,24 @@ const STALE_THRESHOLDS: Partial<Record<Status, number>> = {
 };
 
 const HEARTBEAT_INTERVAL = 60_000; // 1 分钟
+const MAX_STALE_RECOVERY_COUNT = 3; // 最大恢复次数
 
 export class WorkflowManager {
   private heartbeatTimer: Timer | null = null;
   private projectsDir: string;
+  private onProjectRecovered?: (projectId: string) => Promise<void>;
 
   constructor(
     projectsDir: string = './active_projects'
   ) {
     this.projectsDir = projectsDir;
+  }
+
+  /**
+   * Set callback for when a stale project is recovered and needs reprocessing
+   */
+  setRecoveryCallback(callback: (projectId: string) => Promise<void>): void {
+    this.onProjectRecovered = callback;
   }
 
   startHeartbeat(): void {
@@ -155,9 +164,32 @@ export class WorkflowManager {
   }
 
   private async recoverStaleProject(projectId: string): Promise<void> {
-    logger.warn('Recovering stale project', { projectId });
-
     const manifest = await this.loadManifest(projectId);
+
+    // Check if max recovery attempts exceeded
+    if (manifest.meta.stale_recovery_count >= MAX_STALE_RECOVERY_COUNT) {
+      logger.error('Project exceeded max stale recovery attempts, marking as failed', {
+        projectId,
+        recoveryCount: manifest.meta.stale_recovery_count
+      });
+      manifest.status = 'failed';
+      manifest.error = {
+        stage: manifest.status,
+        message: `Exceeded max stale recovery attempts (${MAX_STALE_RECOVERY_COUNT})`,
+        retries: manifest.meta.stale_recovery_count,
+        last_retry_at: new Date().toISOString()
+      };
+      manifest.updated_at = new Date().toISOString();
+      await this.saveManifest(projectId, manifest);
+      return;
+    }
+
+    logger.warn('Recovering stale project', {
+      projectId,
+      recoveryAttempt: manifest.meta.stale_recovery_count + 1,
+      maxAttempts: MAX_STALE_RECOVERY_COUNT
+    });
+
     manifest.status = 'stale_recovered';
     manifest.meta.stale_recovery_count += 1;
     manifest.updated_at = new Date().toISOString();
@@ -166,6 +198,18 @@ export class WorkflowManager {
 
     // 自动重新进入 pending
     await this.transitionState(projectId, 'pending');
+
+    // Trigger reprocessing callback if set
+    if (this.onProjectRecovered) {
+      try {
+        await this.onProjectRecovered(projectId);
+      } catch (error) {
+        logger.error('Recovery callback failed', {
+          projectId,
+          error: (error as Error).message
+        });
+      }
+    }
   }
 
   private async saveManifest(projectId: string, manifest: ProjectManifest): Promise<void> {

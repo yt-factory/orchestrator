@@ -72,7 +72,7 @@ export const FAQItemSchema = z.object({
 export const EntitySchema = z.object({
   name: z.string(),
   type: z.enum(['tool', 'concept', 'person', 'company', 'technology']),
-  description: z.string().max(100).optional(),
+  description: z.string().max(1000).optional(),  // Permissive for AI-generated SEO descriptions
   wiki_link: z.string().url().optional()
 });
 
@@ -115,7 +115,16 @@ export const ShortsHookSchema = z.object({
     'counter_intuitive',
     'number_shock',
     'controversy',
-    'quick_tip'
+    'quick_tip',
+    'fomo',
+    'curiosity',
+    'awe',
+    'anger',
+    'validation',
+    'surprise',
+    'humor',
+    'empathy',
+    'urgency'
   ]),
   emotional_trigger: EmotionalTriggerSchema,
   controversy_score: z.number().min(0).max(10),

@@ -2,6 +2,7 @@ import type { SEOData, TrendKeyword, RegionalSEOSchema } from '../core/manifest'
 import type { GeminiClient } from './gemini-client';
 import type { TrendsHook } from './trends-hook';
 import { logger } from '../utils/logger';
+import { safeJsonParse, safeExtract } from '../utils/json-parse';
 
 // ============================================
 // 双角色 Prompt
@@ -91,7 +92,11 @@ ${rawContent.slice(0, 500)}`;
     priority: 'high'
   });
 
-  return JSON.parse(result.text).topic;
+  const parsed = safeJsonParse<{ topic: string }>(result.text, {
+    projectId,
+    operation: 'extractPrimaryTopic'
+  });
+  return parsed.topic ?? 'Unknown Topic';
 }
 
 async function generateRegionalTitles(
@@ -114,7 +119,11 @@ Output as JSON: { "titles": string[] }`;
     priority: 'medium'
   });
 
-  return JSON.parse(result.text).titles;
+  const parsed = safeJsonParse<{ titles: string[] }>(result.text, {
+    projectId,
+    operation: `generateRegionalTitles:${locale}`
+  });
+  return parsed.titles ?? [];
 }
 
 async function forceRegenerateTitlesWithTrends(
@@ -140,7 +149,11 @@ Output as JSON: { "titles": string[] }`;
     priority: 'medium'
   });
 
-  return JSON.parse(result.text).titles;
+  const parsed = safeJsonParse<{ titles: string[] }>(result.text, {
+    projectId,
+    operation: `forceRegenerateTitlesWithTrends:${locale}`
+  });
+  return parsed.titles ?? [];
 }
 
 async function generateRegionalDescription(
@@ -165,7 +178,11 @@ Output as JSON: { "description": string }`;
     priority: 'medium'
   });
 
-  return JSON.parse(result.text).description;
+  const parsed = safeJsonParse<{ description: string }>(result.text, {
+    projectId,
+    operation: `generateRegionalDescription:${locale}`
+  });
+  return parsed.description ?? '';
 }
 
 function extractCulturalHooks(description: string): string[] {
@@ -194,7 +211,11 @@ Output as JSON: { "faq": [{ "question": string, "answer": string, "related_entit
     priority: 'medium'
   });
 
-  return JSON.parse(result.text).faq;
+  const parsed = safeJsonParse<{ faq: Array<{ question: string; answer: string; related_entities: string[] }> }>(
+    result.text,
+    { projectId, operation: 'generateFAQ' }
+  );
+  return parsed.faq ?? [];
 }
 
 async function generateSmartChapters(
@@ -216,7 +237,11 @@ Output as JSON: { "chapters": string }`;
     priority: 'medium'
   });
 
-  return JSON.parse(result.text).chapters;
+  const parsed = safeJsonParse<{ chapters: string }>(result.text, {
+    projectId,
+    operation: 'generateSmartChapters'
+  });
+  return parsed.chapters ?? '';
 }
 
 function extractTags(coreFacts: string[], trends: TrendKeyword[]): string[] {
@@ -275,7 +300,16 @@ export async function generateMultiLangSEO(
     CONTENT_ANALYST_PROMPT + '\n\nContent:\n' + rawContent,
     { projectId, priority: 'high' }
   );
-  const { core_facts, key_entities } = JSON.parse(analysisResult.text);
+  const analysisData = safeJsonParse<{
+    core_facts: string[];
+    key_entities: Array<{
+      name: string;
+      type: 'tool' | 'concept' | 'person' | 'company' | 'technology';
+      description?: string;
+    }>;
+  }>(analysisResult.text, { projectId, operation: 'contentAnalysis' });
+  const core_facts = analysisData.core_facts ?? [];
+  const key_entities = analysisData.key_entities ?? [];
 
   // Step 2: 并行生成各语言版本
   const regionalResults: Array<{

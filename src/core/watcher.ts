@@ -36,7 +36,10 @@ export class FolderWatcher {
     await mkdir(this.config.processedDir, { recursive: true });
 
     this.watcher = chokidar.watch(this.config.incomingDir, {
-      ignored: /(^|[\/\\])\../, // 忽略隐藏文件
+      ignored: [
+        /(^|[\/\\])\../, // 忽略隐藏文件
+        '**/processed/**' // 忽略 processed 子目录
+      ],
       persistent: true,
       awaitWriteFinish: {
         stabilityThreshold: this.config.stabilityDelayMs,
@@ -84,15 +87,25 @@ export class FolderWatcher {
         language: metadata.detectedLanguage
       });
 
-      await this.events.onFileReady(metadata);
-
-      // 移动到 processed
+      // IMPORTANT: Move file to processed BEFORE calling onFileReady
+      // This prevents duplicate detection if processing fails and file stays in incoming
       const newPath = join(this.config.processedDir, basename(filePath));
       await rename(filePath, newPath);
 
-      logger.info('File processed and moved', {
+      // Update metadata path to reflect new location
+      metadata.path = newPath;
+
+      logger.info('File moved to processed', {
         from: filePath,
         to: newPath
+      });
+
+      // Now process (if this fails, file is already moved so no duplicates)
+      await this.events.onFileReady(metadata);
+
+      logger.info('File processing triggered', {
+        path: newPath,
+        wordCount: metadata.wordCount
       });
     } catch (error) {
       this.events.onError(error as Error, filePath);

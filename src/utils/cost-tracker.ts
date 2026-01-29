@@ -55,6 +55,9 @@ export class CostTracker {
     return { ...this.data };
   }
 
+  /**
+   * Returns a new empty cost tracking structure for a project
+   */
   getForProject(): CostTracking {
     return {
       total_tokens_used: 0,
@@ -66,6 +69,24 @@ export class CostTracker {
       estimated_cost_usd: 0,
       api_calls_count: 0
     };
+  }
+
+  /**
+   * Record usage to a project-specific cost tracking object (mutable)
+   */
+  recordForProject(projectCost: CostTracking, model: string, tokens: number): void {
+    projectCost.total_tokens_used += tokens;
+    projectCost.api_calls_count += 1;
+
+    if (model in projectCost.tokens_by_model) {
+      projectCost.tokens_by_model[model as keyof typeof projectCost.tokens_by_model] += tokens;
+    }
+
+    const price = TOKEN_PRICES_USD[model] || 0;
+    projectCost.estimated_cost_usd += (tokens / 1_000_000) * price;
+
+    // Also record to global tracker
+    this.record(model, tokens);
   }
 
   private async saveToDisk(): Promise<void> {

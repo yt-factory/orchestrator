@@ -1,6 +1,7 @@
 import type { ShortsExtraction, ShortsHook, ScriptSegment } from '../core/manifest';
 import type { GeminiClient } from './gemini-client';
 import { logger } from '../utils/logger';
+import { safeJsonParse } from '../utils/json-parse';
 
 // CTA 模板 (根据情绪类型)
 const CTA_TEMPLATES: Record<string, string[]> = {
@@ -112,7 +113,11 @@ export async function extractShortsHooks(
     { projectId, priority: 'low' }
   );
 
-  const parsed = JSON.parse(result.text);
+  const parsed = safeJsonParse<{
+    hooks: ShortsHook[];
+    vertical_crop_focus: 'center' | 'left' | 'right' | 'speaker' | 'dynamic';
+    recommended_music_mood?: 'upbeat' | 'dramatic' | 'chill' | 'none';
+  }>(result.text, { projectId, operation: 'extractShortsHooks' });
 
   // 注入 CTA
   const hooksWithCTA: ShortsHook[] = parsed.hooks.map((hook: ShortsHook) => injectCTA(hook));

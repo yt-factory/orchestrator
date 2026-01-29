@@ -7,6 +7,7 @@ import { generateMultiLangSEO } from './agents/seo-expert';
 import { extractShortsHooks } from './agents/shorts-extractor';
 import { matchVoice } from './agents/voice-matcher';
 import { logger } from './utils/logger';
+import { safeJsonParse } from './utils/json-parse';
 
 async function main() {
   logger.info('YT-Factory Orchestrator starting...');
@@ -23,11 +24,17 @@ async function main() {
   // ============================================
   logger.info('Warming up connections...');
   await geminiClient.warmUp();
+  await trendsHook.init();  // Load trends cache from disk
   logger.info('Connection pool ready');
 
   // ============================================
   // Step 3: 启动 Heartbeat
   // ============================================
+  // Set recovery callback to reprocess stale projects
+  workflowManager.setRecoveryCallback(async (projectId) => {
+    logger.info('Reprocessing recovered stale project', { projectId });
+    await processProject(projectId, workflowManager, geminiClient, trendsHook);
+  });
   workflowManager.startHeartbeat();
   logger.info('Heartbeat started');
 
@@ -118,6 +125,7 @@ async function processProject(
   trendsHook: TrendsHook
 ): Promise<void> {
   const startTime = Date.now();
+  const startTokens = geminiClient.getTokenSnapshot();
 
   try {
     // pending -> analyzing
@@ -141,13 +149,28 @@ Content:
 ${rawContent}`,
       { projectId, priority: 'high' }
     );
-    const { script, estimated_duration_seconds } = JSON.parse(scriptResult.text);
+    const scriptData = safeJsonParse<{
+      script: Array<{
+        timestamp: string;
+        voiceover: string;
+        visual_hint: 'code_block' | 'diagram' | 'text_animation' | 'b-roll' | 'screen_recording' | 'talking_head_placeholder';
+        estimated_duration_seconds: number;
+      }>;
+      estimated_duration_seconds: number;
+    }>(scriptResult.text, { projectId, operation: 'scriptGeneration' });
+    const script = scriptData.script ?? [];
+    const estimated_duration_seconds = scriptData.estimated_duration_seconds ?? 60;
 
     // 生成 SEO
     const seoData = await generateMultiLangSEO(rawContent, projectId, geminiClient, trendsHook);
 
     // 提取 Shorts
     const shortsData = await extractShortsHooks(script, projectId, geminiClient);
+
+    // Calculate tokens used for this project
+    const endTokens = geminiClient.getTokenSnapshot();
+    const projectTokensUsed = endTokens - startTokens;
+    const globalCost = geminiClient.getCostReport();
 
     // 更新 manifest
     await workflowManager.updateManifest(projectId, (m) => {
@@ -169,6 +192,14 @@ ${rawContent}`,
       m.meta.processing_time_ms = Date.now() - startTime;
       m.meta.model_used = scriptResult.modelUsed;
       m.meta.is_fallback_mode = scriptResult.isFallbackMode;
+
+      // Update per-project cost tracking
+      m.meta.cost.total_tokens_used = projectTokensUsed;
+      m.meta.cost.api_calls_count = globalCost.api_calls_count - (manifest.meta.cost?.api_calls_count ?? 0);
+      // Estimate cost based on primary model used
+      const pricePerMillion = scriptResult.modelUsed.includes('pro') ? 5.0 :
+                              scriptResult.modelUsed.includes('flash') ? 0.5 : 0.15;
+      m.meta.cost.estimated_cost_usd = (projectTokensUsed / 1_000_000) * pricePerMillion;
     });
 
     // analyzing -> rendering
