@@ -205,12 +205,12 @@ export const ShortsCandidateSchema = z.object({
 export const CostTrackingSchema = z.object({
   total_tokens_used: z.number().default(0),
   tokens_by_model: z.object({
-    'gemini-3-pro': z.number().default(0),
-    'gemini-3-flash': z.number().default(0),
+    'gemini-3-pro-preview': z.number().default(0),
+    'gemini-3-flash-preview': z.number().default(0),
     'gemini-2.5-flash': z.number().default(0)
   }).default({
-    'gemini-3-pro': 0,
-    'gemini-3-flash': 0,
+    'gemini-3-pro-preview': 0,
+    'gemini-3-flash-preview': 0,
     'gemini-2.5-flash': 0
   }),
   estimated_cost_usd: z.number().default(0),
@@ -281,14 +281,14 @@ export const ProjectManifestSchema = z.object({
   meta: z.object({
     stale_recovery_count: z.number().default(0),
     processing_time_ms: z.number().optional(),
-    model_used: z.string().default('gemini-3-pro'),
+    model_used: z.string().default('gemini-3-pro-preview'),
     is_fallback_mode: z.boolean().default(false),
     trends_authority_score: z.number().min(0).max(100).optional(),
     cost: CostTrackingSchema.default({
       total_tokens_used: 0,
       tokens_by_model: {
-        'gemini-3-pro': 0,
-        'gemini-3-flash': 0,
+        'gemini-3-pro-preview': 0,
+        'gemini-3-flash-preview': 0,
         'gemini-2.5-flash': 0
       },
       estimated_cost_usd: 0,
@@ -296,13 +296,13 @@ export const ProjectManifestSchema = z.object({
     })
   }).default({
     stale_recovery_count: 0,
-    model_used: 'gemini-3-pro',
+    model_used: 'gemini-3-pro-preview',
     is_fallback_mode: false,
     cost: {
       total_tokens_used: 0,
       tokens_by_model: {
-        'gemini-3-pro': 0,
-        'gemini-3-flash': 0,
+        'gemini-3-pro-preview': 0,
+        'gemini-3-flash-preview': 0,
         'gemini-2.5-flash': 0
       },
       estimated_cost_usd: 0,

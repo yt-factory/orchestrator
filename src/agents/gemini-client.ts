@@ -6,13 +6,14 @@ import { logger } from '../utils/logger';
 import { withRetry } from '../utils/retry';
 
 // Fallback model chain (Gemini 3 series - January 2026)
+// Model names are configurable via environment variables (preview naming convention)
 const MODEL_FALLBACK_CHAIN = [
-  'gemini-3-pro',
-  'gemini-3-flash',
-  'gemini-2.5-flash'
+  process.env.GEMINI_PRO_MODEL || 'gemini-3-pro-preview',
+  process.env.GEMINI_FLASH_MODEL || 'gemini-3-flash-preview',
+  process.env.GEMINI_FLASH_LITE_MODEL || 'gemini-2.5-flash'
 ] as const;
 
-type ModelName = (typeof MODEL_FALLBACK_CHAIN)[number];
+type ModelName = string;
 
 interface GenerateOptions {
   projectId: string;
@@ -299,7 +300,7 @@ export class GeminiClient {
 
     return {
       text: mockResponse,
-      modelUsed: 'gemini-3-pro',
+      modelUsed: MODEL_FALLBACK_CHAIN[0] ?? 'gemini-3-pro-preview',
       isFallbackMode: false,
       tokensUsed: Math.ceil(prompt.length / 4 + mockResponse.length / 4)
     };
