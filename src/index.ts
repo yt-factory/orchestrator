@@ -8,6 +8,8 @@ import { extractShortsHooks } from './agents/shorts-extractor';
 import { matchVoice } from './agents/voice-matcher';
 import { logger } from './utils/logger';
 import { safeJsonParse } from './utils/json-parse';
+import { fileHashManager } from './core/file-hash-manager';
+import { modelDegradation } from './services/model-degradation';
 
 async function main() {
   logger.info('YT-Factory Orchestrator starting...');
@@ -25,7 +27,10 @@ async function main() {
   logger.info('Warming up connections...');
   await geminiClient.warmUp();
   await trendsHook.init();  // Load trends cache from disk
-  logger.info('Connection pool ready');
+  await fileHashManager.init();  // Load file hash cache from disk
+  logger.info('Connection pool ready', {
+    hashCacheStats: fileHashManager.getStats()
+  });
 
   // ============================================
   // Step 3: 启动 Heartbeat
@@ -49,6 +54,17 @@ async function main() {
     },
     {
       onFileReady: async (metadata) => {
+        // Check for duplicate files before processing
+        const duplicateCheck = await workflowManager.isFileAlreadyProcessed(metadata.path);
+
+        if (duplicateCheck.isProcessed) {
+          logger.info('File already processed, skipping', {
+            filePath: metadata.path,
+            existingProjectId: duplicateCheck.existingProjectId
+          });
+          return;
+        }
+
         const projectId = await workflowManager.createProject(
           metadata.path,
           metadata.content,
@@ -133,9 +149,19 @@ async function processProject(
     const manifest = await workflowManager.loadManifest(projectId);
     const rawContent = manifest.input_source.raw_content;
 
-    // 生成脚本
-    const scriptResult = await geminiClient.generate(
-      `You are a professional YouTube scriptwriter. Convert this content into a video script with timestamps.
+    // Get current model config for potential degraded prompt
+    const modelConfig = workflowManager.getModelConfig(manifest);
+    const traceId = manifest.meta.trace_id;
+
+    logger.debug('Processing with model', {
+      projectId,
+      traceId,
+      model: modelConfig.name,
+      isDegraded: manifest.meta.is_degraded
+    });
+
+    // Build script generation prompt
+    let scriptPrompt = `You are a professional YouTube scriptwriter. Convert this content into a video script with timestamps.
 
 Each segment must have:
 - timestamp: "MM:SS" format
@@ -146,9 +172,17 @@ Each segment must have:
 Output as JSON: { "script": [...], "estimated_duration_seconds": number }
 
 Content:
-${rawContent}`,
-      { projectId, priority: 'high' }
-    );
+${rawContent}`;
+
+    // Apply degraded prompt if using strict model
+    scriptPrompt = modelDegradation.getDegradedPrompt(scriptPrompt, modelConfig);
+
+    // 生成脚本
+    const scriptResult = await geminiClient.generate(scriptPrompt, {
+      projectId,
+      priority: 'high',
+      preferredModel: modelConfig.name
+    });
     const scriptData = safeJsonParse<{
       script: Array<{
         timestamp: string;
@@ -205,33 +239,20 @@ ${rawContent}`,
     // analyzing -> rendering
     await workflowManager.transitionState(projectId, 'rendering');
 
+    // Mark file as processed for duplicate detection
+    await workflowManager.markFileAsProcessed(projectId);
+
     logger.info('Project analysis complete', {
       projectId,
       processingTimeMs: Date.now() - startTime,
       modelUsed: scriptResult.modelUsed,
       trendCoverage: seoData.trend_coverage_score,
-      shortsCount: shortsData.hooks.length
+      shortsCount: shortsData.hooks.length,
+      isDegraded: manifest.meta.is_degraded
     });
   } catch (error) {
-    logger.error('Project processing failed', {
-      projectId,
-      error: (error as Error).message,
-      stage: 'analyzing'
-    });
-
-    try {
-      await workflowManager.updateManifest(projectId, (m) => {
-        m.status = 'failed';
-        m.error = {
-          stage: 'analyzing',
-          message: (error as Error).message,
-          retries: 3,
-          last_retry_at: new Date().toISOString()
-        };
-      });
-    } catch {
-      logger.error('Failed to update manifest on error', { projectId });
-    }
+    // Use new intelligent error handling with degradation support
+    await workflowManager.handleError(projectId, error as Error, 'analyzing');
   }
 }
 

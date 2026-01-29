@@ -1,6 +1,31 @@
 import { z } from 'zod';
 
 // ============================================
+// 错误指纹类型 (用于智能降级)
+// ============================================
+
+export const ErrorFingerprintSchema = z.object({
+  type: z.enum([
+    'zod_validation',      // Zod Schema 验证失败
+    'gemini_api',          // Gemini API 错误
+    'network',             // 网络错误
+    'file_system',         // 文件系统错误
+    'unknown'              // 未知错误
+  ]),
+  code: z.string(),        // 错误代码 (如 'invalid_enum_value')
+  path: z.string().optional(),  // 错误路径 (如 'shorts.hooks[1].hook_type')
+  message: z.string()
+});
+
+export const ErrorHistoryEntrySchema = z.object({
+  timestamp: z.string().datetime(),
+  error: z.string(),
+  fingerprint: ErrorFingerprintSchema.optional(),
+  stage: z.string(),
+  model: z.string().optional()
+});
+
+// ============================================
 // 基础类型定义
 // ============================================
 
@@ -240,7 +265,9 @@ export const ProjectManifestSchema = z.object({
     'uploading',
     'completed',
     'failed',
-    'stale_recovered'
+    'stale_recovered',
+    'dead_letter',       // 死信状态
+    'degraded_retry'     // 降级重试状态
   ]),
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
@@ -302,7 +329,23 @@ export const ProjectManifestSchema = z.object({
       },
       estimated_cost_usd: 0,
       api_calls_count: 0
-    })
+    }),
+    // 错误追踪
+    retry_count: z.number().default(0),
+    error_fingerprint: ErrorFingerprintSchema.optional(),
+    error_history: z.array(ErrorHistoryEntrySchema).default([]),
+    // 模型降级追踪
+    used_models: z.array(z.string()).default([]),
+    current_model: z.string().optional(),
+    is_degraded: z.boolean().default(false),
+    // 死信标记
+    is_dead_letter: z.boolean().default(false),
+    // 追踪 ID
+    trace_id: z.string().uuid().optional(),
+    gateway_trace_id: z.string().optional(),
+    // 文件信息
+    file_hash: z.string().optional(),
+    file_size: z.number().optional()
   }).default({
     stale_recovery_count: 0,
     model_used: 'gemini-3-pro-preview',
@@ -316,7 +359,12 @@ export const ProjectManifestSchema = z.object({
       },
       estimated_cost_usd: 0,
       api_calls_count: 0
-    }
+    },
+    retry_count: 0,
+    error_history: [],
+    used_models: [],
+    is_degraded: false,
+    is_dead_letter: false
   })
 });
 
@@ -334,3 +382,6 @@ export type MonetizationInfo = z.infer<typeof MonetizationInfoSchema>;
 export type ContentPlan = z.infer<typeof ContentPlanSchema>;
 export type ExtendedFAQItem = z.infer<typeof ExtendedFAQItemSchema>;
 export type ShortsCandidate = z.infer<typeof ShortsCandidateSchema>;
+export type ErrorFingerprint = z.infer<typeof ErrorFingerprintSchema>;
+export type ErrorHistoryEntry = z.infer<typeof ErrorHistoryEntrySchema>;
+export type RegionalSEO = z.infer<typeof RegionalSEOSchema>;
