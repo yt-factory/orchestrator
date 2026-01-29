@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { FolderWatcher } from './core/watcher';
 import { WorkflowManager } from './core/workflow';
 import { GeminiClient } from './agents/gemini-client';

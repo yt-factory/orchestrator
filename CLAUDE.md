@@ -26,20 +26,21 @@
 │                                                                       │
 │   ┌─────────────────────────────────────────────────────────────┐    │
 │   │                    REQUEST FLOW CONTROL                      │    │
-│   │  Priority Queue → Token Bucket (60/min) → Connection Pool   │    │
+│   │  Priority Queue → Token Bucket (60/min) → Gemini SDK        │    │
 │   │       │                  │                      │            │    │
 │   │   [HIGH] Script      [MEDIUM] SEO         [LOW] Shorts      │    │
 │   └─────────────────────────────────────────────────────────────┘    │
 │                              │                                        │
 │                              ▼                                        │
-│   [orchestrator] ──MCP──> [mcp-gateway] ──> Gemini 3 Pro/Flash       │
-│        │                       │                                      │
-│        │                       ├──> Google Trends API                 │
-│        │                       └──> ElevenLabs / Google TTS           │
+│   [orchestrator] ─────────────────────────> Gemini 3 Pro/Flash       │
+│        │              (@google/generative-ai SDK)                    │
+│        │                                                              │
+│        ├──MCP──> [mcp-gateway] ──> Google Trends API                 │
+│        │                       └──> YouTube Data API                  │
 │        │                                                              │
 │        │ (manifest.json)                                              │
 │        ▼                                                              │
-│   [video-renderer] ──> MP4 + Shorts (9:16) ──> YouTube Data API      │
+│   [video-renderer] ──> MP4 + Shorts (9:16) ──> YouTube Upload        │
 │                                                                       │
 │   ┌─────────────────────────────────────────────────────────────┐    │
 │   │  Fallback Chain: 3-Pro (3x) → 3-Flash (3x) → 2.5-Flash (3x) │    │
@@ -59,8 +60,8 @@
 | Language | TypeScript (Strict Mode) | 类型安全 |
 | Validation | Zod | Runtime schema validation |
 | File Watch | chokidar | 目录监控 |
-| Protocol | MCP SDK | 与 Gemini/Gateway 通信 |
-| Connection Pool | generic-pool | MCP 连接复用 |
+| AI SDK | @google/generative-ai | Gemini 3 text generation |
+| Protocol | MCP SDK | 与 Gateway (YouTube/Trends) 通信 |
 | Rate Limiting | Token Bucket + Priority Queue | 平滑请求 + 优先级控制 |
 | ID Generation | uuid | 项目唯一标识 |
 
@@ -1974,4 +1975,45 @@ Total errors fixed in Part 2 session: **22**
 | Null safety (emotion-extractor) | 5 | Null guards + CTA option fallbacks |
 | Chokidar types (watcher.ts) | 3 | Direct type imports + explicit annotations |
 | Logger properties (logger.ts) | 3 | Explicit destructuring to avoid duplication |
+
+### Architecture Update: Direct Gemini SDK (Jan 29, 2026)
+
+**Problem:** Original design routed text generation through MCP gateway, but:
+1. MCP gateway (`mcp-gateway/`) is specialized for YouTube/Trends API operations
+2. Gateway doesn't have a `generate` tool for raw text generation
+3. Orchestrator hung on startup trying to connect to non-existent MCP tool
+
+**Solution:** Gemini client now uses `@google/generative-ai` SDK directly:
+```
+Before: [orchestrator] → MCP → [mcp-gateway] → Gemini API
+After:  [orchestrator] → @google/generative-ai SDK → Gemini API
+        [orchestrator] → MCP → [mcp-gateway] → YouTube/Trends APIs (separate)
+```
+
+**Key Changes:**
+- `src/agents/gemini-client.ts` - Rewritten to use GoogleGenerativeAI SDK
+- `src/index.ts` - Added `import 'dotenv/config'` for environment loading
+- `.env` - Added `GEMINI_API_KEY` variable
+- `package.json` - Added `@google/generative-ai` dependency
+
+**Startup Flow Fix:**
+1. `dotenv/config` loads environment variables at startup
+2. GeminiClient initializes with API key from `GEMINI_API_KEY`
+3. `warmUp()` initializes all models in fallback chain
+4. Mock mode (`MOCK_MODE=true`) available for development without API key
+
+**Gotcha #6: trends-hook.ts null safety**
+```typescript
+// ❌ Wrong - parsed.keywords could be undefined
+const parsed = JSON.parse(result.text);
+return parsed.keywords as string[];
+
+// ✅ Correct - validate array before returning
+const keywords = parsed.keywords;
+if (!Array.isArray(keywords)) {
+  logger.warn('Trends response missing keywords array', { projectId });
+  return [];
+}
+return keywords as string[];
+```
 

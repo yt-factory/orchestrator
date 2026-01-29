@@ -193,7 +193,14 @@ Output as JSON: { "keywords": string[] }`;
       });
 
       const parsed = JSON.parse(result.text);
-      return parsed.keywords as string[];
+      const keywords = parsed.keywords;
+
+      if (!Array.isArray(keywords)) {
+        logger.warn('Trends response missing keywords array', { projectId });
+        return [];
+      }
+
+      return keywords as string[];
     } catch (error) {
       logger.warn('Failed to fetch trends, returning empty', {
         projectId,

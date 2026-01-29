@@ -1,13 +1,11 @@
-import { createPool, Pool } from 'generic-pool';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { GoogleGenerativeAI, type GenerativeModel } from '@google/generative-ai';
 import { TokenBucket } from '../infra/token-bucket';
 import { PriorityQueue, type Priority } from '../infra/priority-queue';
 import { CostTracker } from '../utils/cost-tracker';
 import { logger } from '../utils/logger';
 import { withRetry } from '../utils/retry';
 
-// Fallback 模型链 (Gemini 3 series - January 2026)
+// Fallback model chain (Gemini 3 series - January 2026)
 const MODEL_FALLBACK_CHAIN = [
   'gemini-3-pro',
   'gemini-3-flash',
@@ -15,12 +13,6 @@ const MODEL_FALLBACK_CHAIN = [
 ] as const;
 
 type ModelName = (typeof MODEL_FALLBACK_CHAIN)[number];
-
-interface MCPConnection {
-  client: Client;
-  transport: StdioClientTransport;
-  alive: boolean;
-}
 
 interface GenerateOptions {
   projectId: string;
@@ -37,12 +29,23 @@ interface GenerateResult {
 }
 
 export class GeminiClient {
-  private pool: Pool<MCPConnection>;
+  private genAI: GoogleGenerativeAI;
+  private models: Map<ModelName, GenerativeModel> = new Map();
   private tokenBucket: TokenBucket;
   private priorityQueue: PriorityQueue;
   private costTracker: CostTracker;
+  private mockMode: boolean;
 
-  constructor(private gatewayCommand: string = 'mcp-gateway') {
+  constructor() {
+    this.mockMode = process.env.MOCK_MODE === 'true';
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey && !this.mockMode) {
+      throw new Error('GEMINI_API_KEY environment variable is required');
+    }
+
+    this.genAI = new GoogleGenerativeAI(apiKey || 'mock-key');
+
     // Token Bucket: 60 requests per minute
     this.tokenBucket = new TokenBucket({
       maxTokens: 60,
@@ -51,89 +54,99 @@ export class GeminiClient {
 
     this.priorityQueue = new PriorityQueue();
     this.costTracker = new CostTracker();
-
-    this.pool = createPool<MCPConnection>(
-      {
-        create: async () => this.createConnection(),
-        destroy: async (conn) => {
-          conn.alive = false;
-          await conn.transport.close();
-        },
-        validate: async (conn) => conn.alive
-      },
-      {
-        max: 5,
-        min: 1,
-        idleTimeoutMillis: 30_000,
-        acquireTimeoutMillis: 10_000
-      }
-    );
   }
 
   /**
-   * Warm-up: 预建立连接，必须在 FolderWatcher 之前调用
+   * Warm-up: Initialize models and cost tracker
    */
   async warmUp(): Promise<void> {
-    logger.info('Warming up connection pool...');
+    logger.info('Warming up Gemini client...');
     await this.costTracker.init();
-    const conn = await this.pool.acquire();
-    await this.pool.release(conn);
-    logger.info('Connection pool warmed up successfully');
+
+    if (this.mockMode) {
+      logger.info('Mock mode enabled - skipping Gemini model initialization');
+      return;
+    }
+
+    // Initialize all models in the fallback chain
+    for (const modelName of MODEL_FALLBACK_CHAIN) {
+      try {
+        const model = this.genAI.getGenerativeModel({ model: modelName });
+        this.models.set(modelName, model);
+        logger.info('Model initialized', { model: modelName });
+      } catch (error) {
+        logger.warn('Failed to initialize model', {
+          model: modelName,
+          error: (error as Error).message
+        });
+      }
+    }
+
+    if (this.models.size === 0) {
+      throw new Error('Failed to initialize any Gemini models');
+    }
+
+    logger.info('Gemini client warmed up successfully', {
+      availableModels: Array.from(this.models.keys())
+    });
   }
 
   /**
-   * 主生成方法 (含优先级队列 + Fallback)
+   * Main generation method with priority queue + fallback
    */
   async generate(prompt: string, options: GenerateOptions): Promise<GenerateResult> {
     const { projectId, priority = 'medium', maxRetries = 3 } = options;
 
-    // 加入优先级队列等待
+    // Join priority queue
     await this.priorityQueue.enqueue(priority);
 
     try {
       // Rate limiting
       await this.tokenBucket.acquire();
 
-      const conn = await this.pool.acquire();
-
-      try {
-        return await this.generateWithFallback(conn, prompt, projectId, maxRetries);
-      } finally {
-        await this.pool.release(conn);
+      if (this.mockMode) {
+        return this.generateMock(prompt, projectId);
       }
+
+      return await this.generateWithFallback(prompt, projectId, maxRetries);
     } finally {
       this.priorityQueue.dequeue();
     }
   }
 
   /**
-   * Fallback 链执行 + Prompt 简化
+   * Fallback chain execution + prompt simplification
    */
   private async generateWithFallback(
-    conn: MCPConnection,
     originalPrompt: string,
     projectId: string,
     retriesPerModel: number
   ): Promise<GenerateResult> {
     for (let modelIdx = 0; modelIdx < MODEL_FALLBACK_CHAIN.length; modelIdx++) {
-      const model = MODEL_FALLBACK_CHAIN[modelIdx]!;
+      const modelName = MODEL_FALLBACK_CHAIN[modelIdx]!;
+      const model = this.models.get(modelName);
       const isFallbackMode = modelIdx > 0;
 
-      // 如果是 Fallback 模式，简化 Prompt
+      if (!model) {
+        logger.warn('Model not available, skipping', { model: modelName });
+        continue;
+      }
+
+      // Simplify prompt for fallback mode
       const prompt = isFallbackMode
         ? this.simplifyPromptForFallback(originalPrompt)
         : originalPrompt;
 
       try {
         const result = await withRetry(
-          () => this.sendViaMCP(conn, prompt, model),
+          () => this.callGemini(model, prompt),
           {
             maxRetries: retriesPerModel,
             baseDelayMs: 1000,
             onRetry: (attempt, error) => {
               logger.warn('Gemini retry', {
                 projectId,
-                model,
+                model: modelName,
                 attempt,
                 error: error.message
               });
@@ -141,19 +154,19 @@ export class GeminiClient {
           }
         );
 
-        // 记录成本
-        this.costTracker.record(model, result.tokensUsed);
+        // Record cost
+        this.costTracker.record(modelName, result.tokensUsed);
 
         logger.info('Gemini generation successful', {
           projectId,
-          model,
+          model: modelName,
           isFallbackMode,
           tokensUsed: result.tokensUsed
         });
 
         return {
           text: result.text,
-          modelUsed: model,
+          modelUsed: modelName,
           isFallbackMode,
           tokensUsed: result.tokensUsed
         };
@@ -162,7 +175,7 @@ export class GeminiClient {
 
         logger.error('Model failed', {
           projectId,
-          model,
+          model: modelName,
           nextModel: nextModel || 'NONE',
           error: (error as Error).message
         });
@@ -179,44 +192,121 @@ export class GeminiClient {
   }
 
   /**
-   * 通过 MCP 发送请求
+   * Call Gemini API directly
    */
-  private async sendViaMCP(
-    conn: MCPConnection,
-    prompt: string,
-    model: string
+  private async callGemini(
+    model: GenerativeModel,
+    prompt: string
   ): Promise<{ text: string; tokensUsed: number }> {
-    const result = await conn.client.callTool({
-      name: 'generate',
-      arguments: { prompt, model }
-    });
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    const text = response.text();
 
-    // 解析 MCP 响应
-    const content = result.content as Array<{ type: string; text?: string }>;
-    const textContent = content.find((c) => c.type === 'text');
-
-    if (!textContent?.text) {
-      throw new Error('Empty response from MCP gateway');
+    if (!text) {
+      throw new Error('Empty response from Gemini');
     }
 
-    // token 使用量从 meta 中获取，若无则估算
-    const tokensUsed =
-      (result as Record<string, unknown>)['_meta'] &&
-      typeof (result as Record<string, unknown>)['_meta'] === 'object' &&
-      (result as Record<string, unknown>)['_meta'] !== null
-        ? ((result as Record<string, unknown>)['_meta'] as Record<string, number>)[
-            'tokensUsed'
-          ] ?? Math.ceil(prompt.length / 4 + textContent.text.length / 4)
-        : Math.ceil(prompt.length / 4 + textContent.text.length / 4);
+    // Get token count from usage metadata if available
+    const usageMetadata = response.usageMetadata;
+    const tokensUsed = usageMetadata
+      ? (usageMetadata.promptTokenCount || 0) + (usageMetadata.candidatesTokenCount || 0)
+      : Math.ceil(prompt.length / 4 + text.length / 4);
+
+    return { text, tokensUsed };
+  }
+
+  /**
+   * Mock generation for development
+   */
+  private generateMock(prompt: string, projectId: string): GenerateResult {
+    logger.info('Mock Gemini call', { projectId });
+
+    // Detect what type of response is expected based on prompt content
+    let mockResponse: string;
+
+    if (prompt.includes('trending keywords') || prompt.includes('keywords')) {
+      mockResponse = JSON.stringify({
+        keywords: ['AI automation', 'YouTube shorts', 'content creation', 'viral videos', 'monetization']
+      });
+    } else if (prompt.includes('video script') || prompt.includes('scriptwriter')) {
+      mockResponse = JSON.stringify({
+        script: [
+          {
+            timestamp: '00:00',
+            voiceover: 'Welcome to this video about the topic.',
+            visual_hint: 'text_animation',
+            estimated_duration_seconds: 5
+          },
+          {
+            timestamp: '00:05',
+            voiceover: 'Let me explain the key points.',
+            visual_hint: 'diagram',
+            estimated_duration_seconds: 10
+          },
+          {
+            timestamp: '00:15',
+            voiceover: 'And that wraps up our discussion.',
+            visual_hint: 'talking_head_placeholder',
+            estimated_duration_seconds: 5
+          }
+        ],
+        estimated_duration_seconds: 20
+      });
+    } else if (prompt.includes('topic') || prompt.includes('primary topic')) {
+      mockResponse = JSON.stringify({
+        topic: 'Technology Tutorial'
+      });
+    } else if (prompt.includes('SEO') || prompt.includes('titles')) {
+      mockResponse = JSON.stringify({
+        titles: [
+          'Amazing Tutorial: Learn This Now',
+          'You Won\'t Believe This Trick',
+          'Complete Guide for Beginners',
+          'Top 5 Tips You Need',
+          'How to Master This in 2026'
+        ],
+        description: 'A comprehensive guide covering all the essential aspects.',
+        tags: ['tutorial', 'guide', 'tips', 'how-to', '2026']
+      });
+    } else if (prompt.includes('Shorts') || prompt.includes('moments')) {
+      mockResponse = JSON.stringify({
+        hooks: [
+          {
+            text: 'This will blow your mind!',
+            timestamp_start: '00:05',
+            timestamp_end: '00:15',
+            hook_type: 'counter_intuitive',
+            emotional_trigger: 'awe',
+            controversy_score: 3,
+            predicted_engagement: {
+              comments: 'medium',
+              shares: 'high',
+              completion_rate: 'high'
+            },
+            face_detection_required: false
+          }
+        ],
+        vertical_crop_focus: 'center',
+        recommended_music_mood: 'upbeat'
+      });
+    } else {
+      // Generic response
+      mockResponse = JSON.stringify({
+        result: 'Mock response for development',
+        prompt_length: prompt.length
+      });
+    }
 
     return {
-      text: textContent.text,
-      tokensUsed
+      text: mockResponse,
+      modelUsed: 'gemini-3-pro',
+      isFallbackMode: false,
+      tokensUsed: Math.ceil(prompt.length / 4 + mockResponse.length / 4)
     };
   }
 
   /**
-   * 简化 Prompt 用于 Fallback 模式
+   * Simplify prompt for fallback mode
    */
   private simplifyPromptForFallback(prompt: string): string {
     const simplificationHeader = `
@@ -239,26 +329,7 @@ IMPORTANT: Please respond in a clear, straightforward manner.
   }
 
   async drain(): Promise<void> {
-    await this.pool.drain();
-    await this.pool.clear();
-    logger.info('Connection pool drained');
-  }
-
-  private async createConnection(): Promise<MCPConnection> {
-    const transport = new StdioClientTransport({
-      command: this.gatewayCommand,
-      args: []
-    });
-
-    const client = new Client({
-      name: 'yt-factory-orchestrator',
-      version: '1.0.0'
-    });
-
-    await client.connect(transport);
-
-    logger.info('MCP connection created');
-
-    return { client, transport, alive: true };
+    // No connection pool to drain with direct SDK
+    logger.info('Gemini client shutdown complete');
   }
 }
