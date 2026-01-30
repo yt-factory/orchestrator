@@ -11,7 +11,8 @@ type Status = ProjectManifest['status'];
 
 const STATE_TRANSITIONS: Record<Status, Status[]> = {
   pending: ['analyzing'],
-  analyzing: ['rendering', 'failed', 'stale_recovered', 'degraded_retry', 'dead_letter'],
+  analyzing: ['pending_audio', 'rendering', 'failed', 'stale_recovered', 'degraded_retry', 'dead_letter'],
+  pending_audio: ['rendering', 'failed', 'stale_recovered', 'dead_letter'],
   rendering: ['uploading', 'failed', 'stale_recovered', 'dead_letter'],
   uploading: ['completed', 'failed', 'stale_recovered', 'dead_letter'],
   completed: [],

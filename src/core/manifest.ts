@@ -233,6 +233,35 @@ export const ShortsCandidateSchema = z.object({
 });
 
 // ============================================
+// NotebookLM Audio Configuration
+// ============================================
+
+export const AudioLanguageConfigSchema = z.object({
+  script_path: z.string(),
+  audio_path: z.string(),
+  audio_status: z.enum(['pending', 'ready']),
+  duration_seconds: z.number().nullable()
+});
+
+export const NotebookLMAudioConfigSchema = z.object({
+  source: z.enum(['notebooklm', 'azure_tts', 'manual']),
+  languages: z.object({
+    en: AudioLanguageConfigSchema.optional(),
+    zh: AudioLanguageConfigSchema.optional()
+  })
+});
+
+export const NotebookLMScriptMetadataSchema = z.object({
+  title: z.string(),
+  bug_report: z.string(),
+  root_cause: z.string(),
+  hotfix: z.string(),
+  estimated_duration_minutes: z.number(),
+  shorts_count: z.number(),
+  generated_at: z.string().datetime()
+});
+
+// ============================================
 // 成本追踪 (Cost Awareness)
 // ============================================
 
@@ -261,6 +290,7 @@ export const ProjectManifestSchema = z.object({
   status: z.enum([
     'pending',
     'analyzing',
+    'pending_audio',     // 等待 NotebookLM 音频生成
     'rendering',
     'uploading',
     'completed',
@@ -312,6 +342,15 @@ export const ProjectManifestSchema = z.object({
 
   // 原创性评分
   originality: OriginalityScoreSchema.optional(),
+
+  // NotebookLM 音频配置
+  audio: NotebookLMAudioConfigSchema.optional(),
+
+  // NotebookLM 脚本元数据
+  notebooklm_scripts: z.object({
+    en: NotebookLMScriptMetadataSchema.optional(),
+    zh: NotebookLMScriptMetadataSchema.optional()
+  }).optional(),
 
   // 运维元数据
   meta: z.object({
@@ -385,3 +424,6 @@ export type ShortsCandidate = z.infer<typeof ShortsCandidateSchema>;
 export type ErrorFingerprint = z.infer<typeof ErrorFingerprintSchema>;
 export type ErrorHistoryEntry = z.infer<typeof ErrorHistoryEntrySchema>;
 export type RegionalSEO = z.infer<typeof RegionalSEOSchema>;
+export type AudioLanguageConfig = z.infer<typeof AudioLanguageConfigSchema>;
+export type NotebookLMAudioConfig = z.infer<typeof NotebookLMAudioConfigSchema>;
+export type NotebookLMScriptMetadata = z.infer<typeof NotebookLMScriptMetadataSchema>;

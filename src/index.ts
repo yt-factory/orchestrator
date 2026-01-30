@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { join } from 'path';
 import { FolderWatcher } from './core/watcher';
 import { WorkflowManager } from './core/workflow';
 import { GeminiClient } from './agents/gemini-client';
@@ -6,6 +7,7 @@ import { TrendsHook } from './agents/trends-hook';
 import { generateMultiLangSEO } from './agents/seo-expert';
 import { extractShortsHooks } from './agents/shorts-extractor';
 import { matchVoice } from './agents/voice-matcher';
+import { generateNotebookLMScripts, buildAudioConfig, printNextSteps } from './agents/notebooklm-generator';
 import { logger } from './utils/logger';
 import { safeJsonParse } from './utils/json-parse';
 import { fileHashManager } from './core/file-hash-manager';
@@ -254,7 +256,27 @@ ${rawContent}`;
     });
 
     // ============================================
-    // Stage 7: Manifest Update
+    // Stage 7: NotebookLM Script Generation
+    // ============================================
+    progress.startStage(ProcessingStage.NOTEBOOKLM_GENERATION);
+    const projectDir = join('./active_projects', projectId);
+    const notebookLMScripts = await generateNotebookLMScripts(
+      {
+        projectId,
+        projectDir,
+        rawContent,
+        languages: ['en', 'zh']
+      },
+      geminiClient
+    );
+    const audioConfig = buildAudioConfig(notebookLMScripts);
+    progress.completeStage(ProcessingStage.NOTEBOOKLM_GENERATION, {
+      scriptsGenerated: notebookLMScripts.length,
+      languages: notebookLMScripts.map(s => s.language)
+    });
+
+    // ============================================
+    // Stage 8: Manifest Update
     // ============================================
     progress.startStage(ProcessingStage.MANIFEST_UPDATE);
 
@@ -287,6 +309,23 @@ ${rawContent}`;
       const pricePerMillion = scriptResult.modelUsed.includes('pro') ? 5.0 :
                               scriptResult.modelUsed.includes('flash') ? 0.5 : 0.15;
       m.meta.cost.estimated_cost_usd = (projectTokensUsed / 1_000_000) * pricePerMillion;
+
+      // Add NotebookLM audio configuration
+      m.audio = audioConfig;
+
+      // Add NotebookLM script metadata
+      m.notebooklm_scripts = {};
+      for (const script of notebookLMScripts) {
+        m.notebooklm_scripts[script.language] = {
+          title: script.metadata.bugReport.slice(0, 50) || 'Geek Zen Episode',
+          bug_report: script.metadata.bugReport,
+          root_cause: script.metadata.rootCause,
+          hotfix: script.metadata.hotfix,
+          estimated_duration_minutes: script.metadata.estimatedDurationMinutes,
+          shorts_count: script.metadata.shortsCount,
+          generated_at: new Date().toISOString()
+        };
+      }
     });
 
     progress.completeStage(ProcessingStage.MANIFEST_UPDATE, {
@@ -295,12 +334,12 @@ ${rawContent}`;
     });
 
     // ============================================
-    // Stage 8: Finalization
+    // Stage 9: Finalization
     // ============================================
     progress.startStage(ProcessingStage.FINALIZATION);
 
-    // analyzing -> rendering
-    await workflowManager.transitionState(projectId, 'rendering');
+    // analyzing -> pending_audio (waiting for NotebookLM audio generation)
+    await workflowManager.transitionState(projectId, 'pending_audio');
 
     // Mark file as processed for duplicate detection
     await workflowManager.markFileAsProcessed(projectId);
@@ -315,6 +354,9 @@ ${rawContent}`;
       shortsCount: shortsData.hooks.length,
       isDegraded: manifest.meta.is_degraded
     });
+
+    // Print Next Steps instructions for NotebookLM audio generation
+    printNextSteps(projectId, projectDir, notebookLMScripts);
 
   } catch (error) {
     // Log pipeline error with stage context

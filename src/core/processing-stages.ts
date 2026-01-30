@@ -18,6 +18,7 @@ export enum ProcessingStage {
   SEO_GENERATION = 'seo_generation',
   SHORTS_EXTRACTION = 'shorts_extraction',
   VOICE_MATCHING = 'voice_matching',
+  NOTEBOOKLM_GENERATION = 'notebooklm_generation',
   MANIFEST_UPDATE = 'manifest_update',
   FINALIZATION = 'finalization'
 }
@@ -30,6 +31,7 @@ const STAGE_NAMES: Record<ProcessingStage, string> = {
   [ProcessingStage.SEO_GENERATION]: 'SEO Metadata',
   [ProcessingStage.SHORTS_EXTRACTION]: 'Shorts Extraction',
   [ProcessingStage.VOICE_MATCHING]: 'Voice Matching',
+  [ProcessingStage.NOTEBOOKLM_GENERATION]: 'NotebookLM Script',
   [ProcessingStage.MANIFEST_UPDATE]: 'Manifest Update',
   [ProcessingStage.FINALIZATION]: 'Finalization'
 };
@@ -42,6 +44,7 @@ const STAGE_ORDER: ProcessingStage[] = [
   ProcessingStage.SEO_GENERATION,
   ProcessingStage.SHORTS_EXTRACTION,
   ProcessingStage.VOICE_MATCHING,
+  ProcessingStage.NOTEBOOKLM_GENERATION,
   ProcessingStage.MANIFEST_UPDATE,
   ProcessingStage.FINALIZATION
 ];
@@ -53,6 +56,7 @@ const STAGE_ORDER: ProcessingStage[] = [
 const STATE_EMOJI: Record<string, string> = {
   pending: '⏳',
   analyzing: '📊',
+  pending_audio: '🎙️',
   rendering: '🎬',
   uploading: '☁️',
   completed: '✅',
@@ -65,6 +69,7 @@ const STATE_EMOJI: Record<string, string> = {
 const STATE_PHASE_NAMES: Record<string, string> = {
   pending: 'Queued',
   analyzing: 'Content Analysis Phase',
+  pending_audio: 'Awaiting Audio Generation',
   rendering: 'Render Queue',
   uploading: 'Upload Phase',
   completed: 'Complete',
