@@ -7,7 +7,7 @@ import { TrendsHook } from './agents/trends-hook';
 import { generateMultiLangSEO } from './agents/seo-expert';
 import { extractShortsHooks } from './agents/shorts-extractor';
 import { matchVoice } from './agents/voice-matcher';
-import { generateNotebookLMScripts, buildAudioConfig, printNextSteps } from './agents/notebooklm-generator';
+import { generateNotebookLMScripts, buildAudioConfig, printNextSteps, checkAndUpdateAudioStatus } from './agents/notebooklm-generator';
 import { logger } from './utils/logger';
 import { safeJsonParse } from './utils/json-parse';
 import { fileHashManager } from './core/file-hash-manager';

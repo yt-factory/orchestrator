@@ -11,6 +11,10 @@ import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { logger } from '../utils/logger';
 import { safeJsonParse } from '../utils/json-parse';
+import type { NotebookLMAudioConfig, AudioLanguageConfig } from '../core/manifest';
+
+// Re-export types for consumers
+export type { NotebookLMAudioConfig, AudioLanguageConfig } from '../core/manifest';
 
 // ============================================
 // Types
@@ -34,21 +38,6 @@ export interface GeneratedScript {
     rootCause: string;
     hotfix: string;
   };
-}
-
-export interface NotebookLMAudioConfig {
-  source: 'notebooklm' | 'azure_tts' | 'manual';
-  languages: {
-    en?: AudioLanguageConfig;
-    zh?: AudioLanguageConfig;
-  };
-}
-
-export interface AudioLanguageConfig {
-  script_path: string;
-  audio_path: string;
-  audio_status: 'pending' | 'ready';
-  duration_seconds: number | null;
 }
 
 // ============================================
@@ -379,6 +368,62 @@ export function buildAudioConfig(scripts: GeneratedScript[]): NotebookLMAudioCon
   }
 
   return config;
+}
+
+/**
+ * Check if audio file exists and update config with status and duration
+ */
+export async function checkAndUpdateAudioStatus(
+  projectDir: string,
+  audioConfig: NotebookLMAudioConfig
+): Promise<NotebookLMAudioConfig> {
+  const { existsSync } = await import('fs');
+  const { execSync } = await import('child_process');
+
+  const updatedConfig: NotebookLMAudioConfig = {
+    ...audioConfig,
+    languages: { ...audioConfig.languages }
+  };
+
+  for (const lang of ['en', 'zh'] as const) {
+    const langConfig = updatedConfig.languages[lang];
+    if (!langConfig) continue;
+
+    const audioPath = join(projectDir, langConfig.audio_path);
+
+    if (existsSync(audioPath)) {
+      // Get audio duration using ffprobe
+      let durationSeconds: number | null = null;
+      try {
+        const result = execSync(
+          `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audioPath}"`,
+          { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
+        );
+        durationSeconds = parseFloat(result.trim());
+        if (isNaN(durationSeconds)) {
+          durationSeconds = null;
+        }
+      } catch {
+        // ffprobe not available or failed, duration remains null
+        logger.warn('Could not get audio duration', { audioPath });
+      }
+
+      updatedConfig.languages[lang] = {
+        ...langConfig,
+        audio_status: 'ready',
+        duration_seconds: durationSeconds
+      };
+
+      logger.info('Audio file detected and status updated', {
+        language: lang,
+        audioPath,
+        status: 'ready',
+        durationSeconds
+      });
+    }
+  }
+
+  return updatedConfig;
 }
 
 /**

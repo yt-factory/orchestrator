@@ -1,11 +1,12 @@
 import { v4 as uuidv4 } from 'uuid';
 import { writeFile, readFile, readdir, mkdir, rename, appendFile } from 'fs/promises';
 import { join } from 'path';
-import { ProjectManifest, ProjectManifestSchema, ErrorFingerprint } from './manifest';
+import { ProjectManifest, ProjectManifestSchema, ErrorFingerprint, type NotebookLMAudioConfig } from './manifest';
 import { logger } from '../utils/logger';
 import { modelDegradation, type ModelConfig } from '../services/model-degradation';
 import { fileHashManager } from './file-hash-manager';
 import { formatStateTransition } from './processing-stages';
+import { checkAndUpdateAudioStatus } from '../agents/notebooklm-generator';
 
 type Status = ProjectManifest['status'];
 
@@ -52,6 +53,7 @@ export class WorkflowManager {
   private heartbeatTimer: Timer | null = null;
   private projectsDir: string;
   private onProjectRecovered?: (projectId: string) => Promise<void>;
+  private onAudioReady?: (projectId: string, audioConfig: NotebookLMAudioConfig) => Promise<void>;
 
   constructor(
     projectsDir: string = './active_projects'
@@ -64,6 +66,13 @@ export class WorkflowManager {
    */
   setRecoveryCallback(callback: (projectId: string) => Promise<void>): void {
     this.onProjectRecovered = callback;
+  }
+
+  /**
+   * Set callback for when audio files are detected in a pending_audio project
+   */
+  setAudioReadyCallback(callback: (projectId: string, audioConfig: NotebookLMAudioConfig) => Promise<void>): void {
+    this.onAudioReady = callback;
   }
 
   startHeartbeat(): void {
@@ -433,6 +442,12 @@ export class WorkflowManager {
       const projects = await this.getAllActiveProjects();
 
       for (const manifest of projects) {
+        // Check for audio files in pending_audio projects
+        if (manifest.status === 'pending_audio') {
+          await this.checkPendingAudioProject(manifest.project_id);
+          continue;
+        }
+
         const threshold = STALE_THRESHOLDS[manifest.status];
         if (!threshold) continue;
 
@@ -444,6 +459,108 @@ export class WorkflowManager {
     } catch (error) {
       logger.error('Heartbeat check failed', { error: String(error) });
     }
+  }
+
+  /**
+   * Check if audio files are ready for a pending_audio project
+   */
+  private async checkPendingAudioProject(projectId: string): Promise<void> {
+    try {
+      const manifest = await this.loadManifest(projectId);
+
+      if (!manifest.audio) {
+        logger.warn('No audio config found for pending_audio project', { projectId });
+        return;
+      }
+
+      const projectDir = join(this.projectsDir, projectId);
+      const updatedAudioConfig = await checkAndUpdateAudioStatus(projectDir, manifest.audio);
+
+      // Check if any audio files were detected
+      const hasNewAudio = Object.entries(updatedAudioConfig.languages).some(([lang, config]) => {
+        const originalConfig = manifest.audio?.languages[lang as 'en' | 'zh'];
+        return config?.audio_status === 'ready' && originalConfig?.audio_status === 'pending';
+      });
+
+      if (hasNewAudio) {
+        // Update manifest with new audio status
+        await this.updateManifest(projectId, (m) => {
+          m.audio = updatedAudioConfig;
+        });
+
+        // Check if all required audio files are ready
+        const configuredLanguages = Object.entries(updatedAudioConfig.languages)
+          .filter((entry): entry is [string, NonNullable<typeof entry[1]>] => entry[1] !== undefined);
+        const allAudioReady = configuredLanguages.length > 0 &&
+          configuredLanguages.every(([, config]) => config.audio_status === 'ready');
+
+        if (allAudioReady) {
+          logger.info('All audio files ready for project', {
+            projectId,
+            languages: Object.keys(updatedAudioConfig.languages)
+          });
+
+          // Trigger callback if set
+          if (this.onAudioReady) {
+            await this.onAudioReady(projectId, updatedAudioConfig);
+          }
+
+          // Print instructions for video rendering
+          this.printRenderInstructions(projectId, projectDir, updatedAudioConfig);
+        } else {
+          // Some audio detected but not all
+          const readyLanguages = Object.entries(updatedAudioConfig.languages)
+            .filter(([, config]) => config?.audio_status === 'ready')
+            .map(([lang]) => lang);
+          const pendingLanguages = Object.entries(updatedAudioConfig.languages)
+            .filter(([, config]) => config?.audio_status === 'pending')
+            .map(([lang]) => lang);
+
+          logger.info('Partial audio detected', {
+            projectId,
+            ready: readyLanguages,
+            pending: pendingLanguages
+          });
+        }
+      }
+    } catch (error) {
+      logger.error('Failed to check audio status', {
+        projectId,
+        error: (error as Error).message
+      });
+    }
+  }
+
+  /**
+   * Print instructions for video rendering when audio is ready
+   */
+  private printRenderInstructions(projectId: string, projectDir: string, audioConfig: NotebookLMAudioConfig): void {
+    console.log('');
+    console.log('═'.repeat(70));
+    console.log('🎧 Audio files detected! Ready for video rendering.');
+    console.log('═'.repeat(70));
+    console.log('');
+    console.log(`📁 Project: ${projectId}`);
+    console.log('');
+
+    for (const [lang, config] of Object.entries(audioConfig.languages)) {
+      if (config?.audio_status === 'ready') {
+        const durationStr = config.duration_seconds
+          ? `${Math.floor(config.duration_seconds / 60)}:${String(Math.floor(config.duration_seconds % 60)).padStart(2, '0')}`
+          : 'unknown';
+        console.log(`  [${lang.toUpperCase()}] Audio ready (${durationStr})`);
+        console.log(`     Path: ${projectDir}/${config.audio_path}`);
+      }
+    }
+
+    console.log('');
+    console.log('  【Next Steps / 下一步】');
+    console.log('  Run the video renderer:');
+    for (const lang of Object.keys(audioConfig.languages)) {
+      console.log(`    node video-renderer/render.mjs ${projectId} --lang=${lang}`);
+    }
+    console.log('');
+    console.log('═'.repeat(70));
   }
 
   private async recoverStaleProject(projectId: string): Promise<void> {
