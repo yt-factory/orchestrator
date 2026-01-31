@@ -77,11 +77,12 @@ orchestrator/
 │   │   ├── workflow.ts         # 状态机 + Heartbeat + Stale Recovery
 │   │   └── manifest.ts         # Zod Schema 定义 & 数据操作
 │   ├── agents/
-│   │   ├── gemini-client.ts    # MCP 客户端 (连接池 + Warm-up + Fallback + Prompt简化)
-│   │   ├── seo-expert.ts       # SEO Prompt 逻辑 (双角色 + 强制热词覆盖)
-│   │   ├── trends-hook.ts      # Google Trends (Authority 分级 + 衰减)
-│   │   ├── shorts-extractor.ts # Shorts 提取 (情绪弧度 + CTA 注入)
-│   │   └── voice-matcher.ts    # Voice Persona 推荐
+│   │   ├── gemini-client.ts        # MCP 客户端 (连接池 + Warm-up + Fallback + Prompt简化)
+│   │   ├── seo-expert.ts           # SEO Prompt 逻辑 (双角色 + 强制热词覆盖)
+│   │   ├── trends-hook.ts          # Google Trends (Authority 分级 + 衰减)
+│   │   ├── shorts-extractor.ts     # Shorts 提取 (情绪弧度 + CTA 注入)
+│   │   ├── voice-matcher.ts        # Voice Persona 推荐
+│   │   └── notebooklm-generator.ts # NotebookLM 脚本生成 (双语播客 + 音频检测)
 │   ├── validators/              # Part 2: 内容验证模块
 │   │   └── originality-checker.ts  # 原创性检测 (视觉80% + 语义70% + 风格指纹)
 │   ├── shorts/                  # Part 2: Shorts 高级提取
@@ -1856,6 +1857,188 @@ main().catch((error) => {
 - [ ] Heartbeat 正常运行？
 - [ ] 无 unhandled rejection？
 
+### NotebookLM Audio Support
+- [ ] NotebookLM 脚本正确生成 (EN + ZH)？
+- [ ] pending_audio 状态转换正常？
+- [ ] 音频文件检测 (heartbeat) 工作正常？
+- [ ] 音频时长正确提取？
+
+---
+
+## 🎙️ NotebookLM Audio Support (Jan 2026)
+
+### Overview
+
+NotebookLM Audio Support 允许使用 Google NotebookLM 生成高质量的"极客禅"播客音频，作为视频渲染的音源。
+
+**工作流程：**
+```
+orchestrator → NotebookLM scripts → 手动上传到 NotebookLM → 下载音频 → 自动检测 → video-renderer
+```
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  NotebookLM Audio Workflow                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  [orchestrator]                                                  │
+│       │                                                          │
+│       ├─ Stage 7: NotebookLM Script Generation                  │
+│       │     └─ Generates: notebooklm_script_en.md               │
+│       │                   notebooklm_script_zh.md               │
+│       │                                                          │
+│       ├─ Status: analyzing → pending_audio                      │
+│       │                                                          │
+│       └─ Heartbeat (60s interval)                               │
+│             └─ Monitors: active_projects/{id}/audio/*.mp3       │
+│                                                                  │
+│  [User Manual Step]                                              │
+│       1. Copy script to NotebookLM (notebooklm.google.com)      │
+│       2. Generate "Audio Overview"                               │
+│       3. Download MP3 to: active_projects/{id}/audio/en.mp3     │
+│                                                                  │
+│  [orchestrator heartbeat detects audio]                         │
+│       └─ Updates manifest: audio_status: pending → ready        │
+│       └─ Extracts duration via ffprobe                          │
+│       └─ Prints render instructions                             │
+│                                                                  │
+│  [video-renderer]                                                │
+│       └─ Validates audio (codec, duration)                      │
+│       └─ Renders video synced to audio                          │
+│       └─ Updates status: pending_audio → rendering              │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Manifest Schema Extensions
+
+```typescript
+// Audio Language Configuration
+export const AudioLanguageConfigSchema = z.object({
+  script_path: z.string(),           // e.g., "notebooklm_script_en.md"
+  audio_path: z.string(),            // e.g., "audio/en.mp3"
+  audio_status: z.enum(['pending', 'ready']),
+  duration_seconds: z.number().nullable()
+});
+
+// NotebookLM Audio Configuration
+export const NotebookLMAudioConfigSchema = z.object({
+  source: z.literal('notebooklm'),
+  languages: z.object({
+    en: AudioLanguageConfigSchema.optional(),
+    zh: AudioLanguageConfigSchema.optional()
+  })
+});
+
+// NotebookLM Script Metadata
+export const NotebookLMScriptMetadataSchema = z.object({
+  title: z.string(),
+  bug_report: z.string(),
+  root_cause: z.string(),
+  hotfix: z.string(),
+  estimated_duration_minutes: z.number(),
+  shorts_count: z.number(),
+  generated_at: z.string().datetime()
+});
+```
+
+### Processing Pipeline (9 Stages)
+
+| Stage | Name | Description |
+|-------|------|-------------|
+| 1 | INIT | Initialize project, transition to analyzing |
+| 2 | SCRIPT_GENERATION | Generate video script segments |
+| 3 | TREND_ANALYSIS | Fetch and analyze trending keywords |
+| 4 | SEO_GENERATION | Generate multi-language SEO metadata |
+| 5 | SHORTS_EXTRACTION | Extract viral hooks with emotional triggers |
+| 6 | VOICE_MATCHING | Match voice persona to content |
+| 7 | **NOTEBOOKLM_GENERATION** | Generate bilingual podcast scripts |
+| 8 | MANIFEST_UPDATE | Persist all results to manifest |
+| 9 | FINALIZATION | Transition to pending_audio, print instructions |
+
+### State Machine
+
+```
+pending → analyzing → pending_audio → rendering → uploading → completed
+                ↑         │
+                └─────────┘ (stale recovery)
+```
+
+**New State: `pending_audio`**
+- Entered after content engine processing completes
+- Heartbeat monitors for audio file uploads
+- Transitions to `rendering` when video-renderer is invoked
+
+### "Geek Zen" Podcast Format
+
+NotebookLM scripts follow the "极客禅" (Geek Zen) format:
+
+**Characters:**
+- **The Architect**: Senior engineer (20+ years), calm and authoritative
+- **The Dev (小王)**: Mid-level engineer, anxious but curious
+
+**Structure:**
+- Act 1: System Alert (2-3 min) - Bug report as human struggle
+- Act 2: Root Cause Analysis (4-5 min) - Technical analogy
+- Act 3: The Koan / Hotfix (3-4 min) - Zen insight as code fix
+- Act 4: Deployment (2-3 min) - Practical application
+
+**Concept Mapping:**
+| Life Concept | Tech Equivalent |
+|--------------|-----------------|
+| Attachment | Memory Leak |
+| Anxiety | Polling Loop |
+| Letting Go | Garbage Collection |
+| Enlightenment | Kernel Upgrade |
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/agents/notebooklm-generator.ts` | Script generation with bilingual prompts |
+| `src/core/manifest.ts` | Audio config schemas |
+| `src/core/workflow.ts` | Audio detection via heartbeat |
+| `src/core/processing-stages.ts` | NOTEBOOKLM_GENERATION stage |
+
+### Usage
+
+**1. Run Orchestrator:**
+```bash
+bun run start
+# Drop markdown file into ./incoming/
+# Wait for processing to complete (status: pending_audio)
+```
+
+**2. Generate Audio Manually:**
+```bash
+# Open generated scripts:
+cat active_projects/{project-id}/notebooklm_script_en.md
+cat active_projects/{project-id}/notebooklm_script_zh.md
+
+# Upload to NotebookLM and generate audio
+# Download MP3 files to:
+#   active_projects/{project-id}/audio/en.mp3
+#   active_projects/{project-id}/audio/zh.mp3
+```
+
+**3. Render Video:**
+```bash
+cd ../video-renderer
+node render.mjs {project-id} --lang=en
+node render.mjs {project-id} --lang=zh
+```
+
+### Audio Validation (video-renderer)
+
+The video-renderer validates audio files before rendering:
+- **File existence**: Must exist and be non-empty
+- **Minimum size**: > 1KB (corrupted file check)
+- **Duration**: 5 seconds to 2 hours
+- **Codec**: mp3, aac, opus, vorbis, flac supported
+- **Detection**: Uses ffprobe for Node.js compatibility
+
 ---
 
 ## 📚 Session Learnings (Jan 2026)
@@ -2015,5 +2198,75 @@ if (!Array.isArray(keywords)) {
   return [];
 }
 return keywords as string[];
+```
+
+### Code Quality Review & Fixes (Jan 31, 2026)
+
+Comprehensive code review identified and fixed 9 issues across orchestrator and mcp-gateway:
+
+#### Orchestrator Fixes
+
+| File | Issue | Fix |
+|------|-------|-----|
+| `src/utils/retry.ts` | TypeScript error - function lacked ending return statement | Added documented throw statement for TypeScript flow analysis |
+| `src/core/workflow.ts` | console.log in `printRenderInstructions` | Replaced with structured `logger.info` call |
+| `src/core/workflow.ts` | No error handling in `loadManifest` | Added try/catch with specific error types (SyntaxError, ENOENT) |
+| `src/core/workflow.ts` | No error handling in `saveManifest` | Added try/catch with error logging and re-throw |
+| `src/core/workflow.ts` | Hardcoded configuration values | Made configurable via environment variables |
+| `src/agents/notebooklm-generator.ts` | console.log in `printNextSteps` | Replaced with structured `logger.info` call |
+| `src/agents/gemini-client.ts` | Hardcoded rate limit | Made configurable via `GEMINI_RATE_LIMIT_RPM` |
+
+#### MCP Gateway Fixes
+
+| File | Issue | Fix |
+|------|-------|-----|
+| `src/config.py` | No validation for required credentials | Added `_get_required_env`, `_get_optional_env` helpers and `validate_config()` |
+
+#### New Environment Variables
+
+```bash
+# Workflow thresholds (all in milliseconds)
+STALE_THRESHOLD_ANALYZING_MS=600000    # 10 min default
+STALE_THRESHOLD_RENDERING_MS=1800000   # 30 min default
+STALE_THRESHOLD_UPLOADING_MS=300000    # 5 min default
+STALE_THRESHOLD_DEGRADED_MS=900000     # 15 min default
+
+# Heartbeat and retry
+HEARTBEAT_INTERVAL_MS=60000            # 1 min default
+MAX_STALE_RECOVERY_COUNT=3
+MAX_RETRIES=3
+
+# Directories
+DEAD_LETTER_DIR=./dead-letter
+ALERTS_DIR=./logs/alerts
+
+# Rate limiting
+GEMINI_RATE_LIMIT_RPM=60               # Requests per minute
+```
+
+**Gotcha #7: TypeScript flow analysis for exhaustive loops**
+```typescript
+// ❌ Wrong - TypeScript thinks loop might exit without returning
+for (let attempt = 1; attempt <= maxRetries; attempt++) {
+  try {
+    return await fn();
+  } catch (error) {
+    if (attempt === maxRetries) throw error;
+    await delay();
+  }
+}
+// TypeScript error: Function lacks ending return statement
+
+// ✅ Correct - Add documented unreachable throw
+for (let attempt = 1; attempt <= maxRetries; attempt++) {
+  try {
+    return await fn();
+  } catch (error) {
+    if (attempt === maxRetries) throw error;
+    await delay();
+  }
+}
+// TypeScript flow analysis requires this even though unreachable
+throw new Error('Retry loop exhausted unexpectedly');
 ```
 

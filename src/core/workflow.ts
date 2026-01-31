@@ -23,18 +23,20 @@ const STATE_TRANSITIONS: Record<Status, Status[]> = {
   dead_letter: []  // Terminal state
 };
 
+// Stale thresholds in milliseconds (configurable via environment)
 const STALE_THRESHOLDS: Partial<Record<Status, number>> = {
-  analyzing: 10 * 60 * 1000,   // 10 分钟
-  rendering: 30 * 60 * 1000,   // 30 分钟
-  uploading: 5 * 60 * 1000,    // 5 分钟
-  degraded_retry: 15 * 60 * 1000  // 15 分钟
+  analyzing: parseInt(process.env.STALE_THRESHOLD_ANALYZING_MS ?? '600000', 10),      // Default: 10 min
+  rendering: parseInt(process.env.STALE_THRESHOLD_RENDERING_MS ?? '1800000', 10),     // Default: 30 min
+  uploading: parseInt(process.env.STALE_THRESHOLD_UPLOADING_MS ?? '300000', 10),      // Default: 5 min
+  degraded_retry: parseInt(process.env.STALE_THRESHOLD_DEGRADED_MS ?? '900000', 10)   // Default: 15 min
 };
 
-const HEARTBEAT_INTERVAL = 60_000; // 1 分钟
-const MAX_STALE_RECOVERY_COUNT = 3; // 最大恢复次数
-const MAX_RETRIES = 3; // 最大重试次数
-const DEAD_LETTER_DIR = './dead-letter';
-const ALERTS_DIR = './logs/alerts';
+// Heartbeat and retry configuration (configurable via environment)
+const HEARTBEAT_INTERVAL = parseInt(process.env.HEARTBEAT_INTERVAL_MS ?? '60000', 10);           // Default: 1 min
+const MAX_STALE_RECOVERY_COUNT = parseInt(process.env.MAX_STALE_RECOVERY_COUNT ?? '3', 10);      // Default: 3
+const MAX_RETRIES = parseInt(process.env.MAX_RETRIES ?? '3', 10);                                // Default: 3
+const DEAD_LETTER_DIR = process.env.DEAD_LETTER_DIR ?? './dead-letter';
+const ALERTS_DIR = process.env.ALERTS_DIR ?? './logs/alerts';
 
 // Alert interface
 interface Alert {
@@ -199,9 +201,30 @@ export class WorkflowManager {
   }
 
   async loadManifest(projectId: string): Promise<ProjectManifest> {
-    const path = join(this.projectsDir, projectId, 'manifest.json');
-    const content = await readFile(path, 'utf-8');
-    return ProjectManifestSchema.parse(JSON.parse(content));
+    const manifestPath = join(this.projectsDir, projectId, 'manifest.json');
+    try {
+      const content = await readFile(manifestPath, 'utf-8');
+      const parsed = JSON.parse(content);
+      return ProjectManifestSchema.parse(parsed);
+    } catch (error) {
+      const err = error as Error;
+      if (err.name === 'SyntaxError') {
+        logger.error('Failed to parse manifest JSON', {
+          projectId,
+          path: manifestPath,
+          error: err.message
+        });
+        throw new Error(`Invalid JSON in manifest for project ${projectId}: ${err.message}`);
+      }
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        logger.error('Manifest file not found', {
+          projectId,
+          path: manifestPath
+        });
+        throw new Error(`Manifest not found for project ${projectId}`);
+      }
+      throw error;
+    }
   }
 
   /**
@@ -535,32 +558,28 @@ export class WorkflowManager {
    * Print instructions for video rendering when audio is ready
    */
   private printRenderInstructions(projectId: string, projectDir: string, audioConfig: NotebookLMAudioConfig): void {
-    console.log('');
-    console.log('═'.repeat(70));
-    console.log('🎧 Audio files detected! Ready for video rendering.');
-    console.log('═'.repeat(70));
-    console.log('');
-    console.log(`📁 Project: ${projectId}`);
-    console.log('');
+    const audioDetails: Array<{ lang: string; duration: string; path: string }> = [];
+    const renderCommands: string[] = [];
 
     for (const [lang, config] of Object.entries(audioConfig.languages)) {
       if (config?.audio_status === 'ready') {
         const durationStr = config.duration_seconds
           ? `${Math.floor(config.duration_seconds / 60)}:${String(Math.floor(config.duration_seconds % 60)).padStart(2, '0')}`
           : 'unknown';
-        console.log(`  [${lang.toUpperCase()}] Audio ready (${durationStr})`);
-        console.log(`     Path: ${projectDir}/${config.audio_path}`);
+        audioDetails.push({
+          lang: lang.toUpperCase(),
+          duration: durationStr,
+          path: `${projectDir}/${config.audio_path}`
+        });
+        renderCommands.push(`node video-renderer/render.mjs ${projectId} --lang=${lang}`);
       }
     }
 
-    console.log('');
-    console.log('  【Next Steps / 下一步】');
-    console.log('  Run the video renderer:');
-    for (const lang of Object.keys(audioConfig.languages)) {
-      console.log(`    node video-renderer/render.mjs ${projectId} --lang=${lang}`);
-    }
-    console.log('');
-    console.log('═'.repeat(70));
+    logger.info('Audio files detected - ready for video rendering', {
+      projectId,
+      audioDetails,
+      renderCommands
+    });
   }
 
   private async recoverStaleProject(projectId: string): Promise<void> {
@@ -613,8 +632,19 @@ export class WorkflowManager {
   }
 
   private async saveManifest(projectId: string, manifest: ProjectManifest): Promise<void> {
-    const path = join(this.projectsDir, projectId, 'manifest.json');
-    await writeFile(path, JSON.stringify(manifest, null, 2));
+    const manifestPath = join(this.projectsDir, projectId, 'manifest.json');
+    try {
+      await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      logger.error('Failed to save manifest', {
+        projectId,
+        path: manifestPath,
+        error: err.message,
+        code: err.code
+      });
+      throw new Error(`Failed to save manifest for project ${projectId}: ${err.message}`);
+    }
   }
 
   private async getAllActiveProjects(): Promise<ProjectManifest[]> {

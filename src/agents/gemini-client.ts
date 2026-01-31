@@ -58,10 +58,11 @@ export class GeminiClient {
 
     this.genAI = new GoogleGenerativeAI(apiKey || 'mock-key');
 
-    // Token Bucket: 60 requests per minute
+    // Token Bucket: Rate limiting (configurable via environment)
+    const maxTokensPerMinute = parseInt(process.env.GEMINI_RATE_LIMIT_RPM ?? '60', 10);
     this.tokenBucket = new TokenBucket({
-      maxTokens: 60,
-      refillRate: 1 // 1 token/sec = 60/min
+      maxTokens: maxTokensPerMinute,
+      refillRate: maxTokensPerMinute / 60 // tokens per second
     });
 
     this.priorityQueue = new PriorityQueue();

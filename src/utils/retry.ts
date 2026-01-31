@@ -25,6 +25,7 @@ export async function withRetry<T>(
       await new Promise<void>((resolve) => setTimeout(resolve, delay));
     }
   }
-
-  throw new Error('Unexpected: retry loop exhausted');
+  // TypeScript flow analysis requires this throw even though it's unreachable
+  // (the loop always either returns successfully or throws on final attempt)
+  throw new Error('Retry loop exhausted unexpectedly');
 }

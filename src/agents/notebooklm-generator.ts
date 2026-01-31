@@ -427,35 +427,27 @@ export async function checkAndUpdateAudioStatus(
 }
 
 /**
- * Print Next Steps instructions to console
+ * Log Next Steps instructions for NotebookLM audio generation
  */
 export function printNextSteps(projectId: string, projectDir: string, scripts: GeneratedScript[]): void {
-  console.log('');
-  console.log('═'.repeat(70));
-  console.log('✨ Orchestrator 处理完成！等待音频生成...');
-  console.log('═'.repeat(70));
-  console.log('');
-  console.log('📋 NEXT STEPS (下一步操作):');
-  console.log('');
+  const scriptDetails = scripts.map(script => ({
+    language: script.language,
+    filepath: script.filepath,
+    audioPath: `${projectDir}/audio/${script.language}.mp3`
+  }));
 
-  for (const script of scripts) {
-    const langLabel = script.language === 'en' ? '英文版' : '中文版';
-    const langName = script.language === 'en' ? 'English' : 'Chinese';
+  const renderCommands = [
+    `cd ../video-renderer`,
+    `node render.mjs ${projectId} --lang=en`,
+    `node render.mjs ${projectId} --lang=zh`
+  ];
 
-    console.log(`  【${langLabel} / ${langName}】`);
-    console.log(`  1. 打开脚本 / Open script: ${script.filepath}`);
-    console.log('  2. 复制全部内容到 NotebookLM / Copy to NotebookLM:');
-    console.log('     https://notebooklm.google.com/');
-    console.log('  3. 点击 "Audio Overview" 生成音频 / Generate audio');
-    console.log(`  4. 下载 MP3 并保存为 / Save as: ${projectDir}/audio/${script.language}.mp3`);
-    console.log('');
-  }
-
-  console.log('  【渲染视频 / Render Video】');
-  console.log('  音频就绪后，运行 / After audio is ready, run:');
-  console.log(`    cd ../video-renderer`);
-  console.log(`    node render.mjs ${projectId} --lang=en`);
-  console.log(`    node render.mjs ${projectId} --lang=zh`);
-  console.log('');
-  console.log('═'.repeat(70));
+  logger.info('Orchestrator processing complete - awaiting audio generation', {
+    projectId,
+    status: 'pending_audio',
+    scripts: scriptDetails,
+    notebookLmUrl: 'https://notebooklm.google.com/',
+    renderCommands,
+    instructions: 'Upload scripts to NotebookLM, generate Audio Overview, download MP3 to audio directory'
+  });
 }
