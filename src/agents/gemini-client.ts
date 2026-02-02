@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI, type GenerativeModel } from '@google/generative-ai';
 import { TokenBucket } from '../infra/token-bucket';
 import { PriorityQueue, type Priority } from '../infra/priority-queue';
+import { CircuitBreaker, CircuitOpenError } from '../infra/circuit-breaker';
 import { CostTracker } from '../utils/cost-tracker';
 import { logger } from '../utils/logger';
 import { withRetry } from '../utils/retry';
@@ -40,12 +41,20 @@ interface GenerateResult {
   tokensUsed: number;
 }
 
+/** Error details from a model attempt in the fallback chain */
+interface ModelAttemptError {
+  model: ModelName;
+  error: string;
+  attempts: number;
+}
+
 export class GeminiClient {
   private genAI: GoogleGenerativeAI;
   private models: Map<ModelName, GenerativeModel> = new Map();
   private tokenBucket: TokenBucket;
   private priorityQueue: PriorityQueue;
   private costTracker: CostTracker;
+  private circuitBreaker: CircuitBreaker;
   private mockMode: boolean;
 
   constructor() {
@@ -67,6 +76,16 @@ export class GeminiClient {
 
     this.priorityQueue = new PriorityQueue();
     this.costTracker = new CostTracker();
+
+    // Circuit Breaker: Fast-fail after consecutive failures
+    const failureThreshold = parseInt(process.env.GEMINI_CIRCUIT_BREAKER_THRESHOLD ?? '5', 10);
+    const resetTimeoutMs = parseInt(process.env.GEMINI_CIRCUIT_BREAKER_RESET_MS ?? '30000', 10);
+    this.circuitBreaker = new CircuitBreaker({
+      failureThreshold,
+      resetTimeoutMs,
+      successThreshold: 2,
+      name: 'gemini-api'
+    });
   }
 
   /**
@@ -105,10 +124,21 @@ export class GeminiClient {
   }
 
   /**
-   * Main generation method with priority queue + fallback
+   * Main generation method with priority queue + fallback + circuit breaker
    */
   async generate(prompt: string, options: GenerateOptions): Promise<GenerateResult> {
     const { projectId, priority = 'medium', maxRetries = 3 } = options;
+
+    // Check circuit breaker first (fast-fail if open)
+    if (!this.circuitBreaker.canExecute()) {
+      const stats = this.circuitBreaker.getStats();
+      throw new CircuitOpenError(
+        `Gemini API circuit breaker is OPEN for project ${projectId}. ` +
+        `Failures: ${stats.failures}, will retry after ${stats.lastFailureTime ?
+          Math.max(0, 30000 - (Date.now() - stats.lastFailureTime)) : 0}ms`,
+        stats
+      );
+    }
 
     // Join priority queue
     await this.priorityQueue.enqueue(priority);
@@ -121,26 +151,45 @@ export class GeminiClient {
         return this.generateMock(prompt, projectId);
       }
 
-      return await this.generateWithFallback(prompt, projectId, maxRetries);
+      const result = await this.generateWithFallback(prompt, projectId, maxRetries);
+
+      // Record success with circuit breaker
+      this.circuitBreaker.recordSuccess();
+
+      return result;
+    } catch (error) {
+      // Record failure with circuit breaker (if not already a circuit open error)
+      if (!(error instanceof CircuitOpenError)) {
+        this.circuitBreaker.recordFailure(error as Error);
+      }
+      throw error;
     } finally {
       this.priorityQueue.dequeue();
     }
   }
 
   /**
-   * Fallback chain execution + prompt simplification
+   * Fallback chain execution + prompt simplification + error context propagation
    */
   private async generateWithFallback(
     originalPrompt: string,
     projectId: string,
     retriesPerModel: number
   ): Promise<GenerateResult> {
+    // Track errors from each model attempt for better debugging
+    const attemptErrors: ModelAttemptError[] = [];
+
     for (let modelIdx = 0; modelIdx < MODEL_FALLBACK_CHAIN.length; modelIdx++) {
       const modelName = MODEL_FALLBACK_CHAIN[modelIdx]!;
       const model = this.models.get(modelName);
       const isFallbackMode = modelIdx > 0;
 
       if (!model) {
+        attemptErrors.push({
+          model: modelName,
+          error: 'Model not initialized',
+          attempts: 0
+        });
         logger.warn('Model not available, skipping', { model: modelName });
         continue;
       }
@@ -150,6 +199,7 @@ export class GeminiClient {
         ? this.simplifyPromptForFallback(originalPrompt)
         : originalPrompt;
 
+      let attemptCount = 0;
       try {
         const result = await withRetry(
           () => this.callGemini(model, prompt),
@@ -157,6 +207,7 @@ export class GeminiClient {
             maxRetries: retriesPerModel,
             baseDelayMs: 1000,
             onRetry: (attempt, error) => {
+              attemptCount = attempt;
               logger.warn('Gemini retry', {
                 projectId,
                 model: modelName,
@@ -174,7 +225,8 @@ export class GeminiClient {
           projectId,
           model: modelName,
           isFallbackMode,
-          tokensUsed: result.tokensUsed
+          tokensUsed: result.tokensUsed,
+          previousFailures: attemptErrors.length
         });
 
         return {
@@ -184,18 +236,34 @@ export class GeminiClient {
           tokensUsed: result.tokensUsed
         };
       } catch (error) {
+        const errorMessage = (error as Error).message;
+
+        // Record this model's failure for error context
+        attemptErrors.push({
+          model: modelName,
+          error: errorMessage,
+          attempts: attemptCount + 1
+        });
+
         const nextModel = MODEL_FALLBACK_CHAIN[modelIdx + 1];
 
         logger.error('Model failed', {
           projectId,
           model: modelName,
           nextModel: nextModel || 'NONE',
-          error: (error as Error).message
+          error: errorMessage,
+          totalAttempts: attemptCount + 1
         });
 
         if (modelIdx === MODEL_FALLBACK_CHAIN.length - 1) {
+          // Build comprehensive error message with context from all models
+          const errorSummary = attemptErrors
+            .map(e => `${e.model}: ${e.error} (${e.attempts} attempts)`)
+            .join('; ');
+
           throw new Error(
-            `All models failed for project ${projectId}. Last error: ${error}`
+            `All models failed for project ${projectId}. ` +
+            `Failure chain: [${errorSummary}]`
           );
         }
       }
