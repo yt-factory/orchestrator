@@ -48,7 +48,10 @@ export class CostTracker {
     this.data.estimated_cost_usd += (tokens / 1_000_000) * price;
 
     // 异步保存
-    this.saveToDisk().catch(() => {});
+    this.saveToDisk().catch((error) => {
+      // Log disk write errors instead of silently swallowing them
+      console.error('[CostTracker] Failed to save to disk:', error);
+    });
   }
 
   getReport(): CostTracking {

@@ -30,6 +30,7 @@ export class FileHashManager {
   private processedFiles: Map<string, ProcessedFile> = new Map();
   private sizeIndex: Map<number, string[]> = new Map();
   private initialized = false;
+  private initPromise: Promise<void> | null = null;
 
   constructor(dataDir: string = './data') {
     this.hashFilePath = path.join(dataDir, 'processed_hashes.json');
@@ -37,8 +38,32 @@ export class FileHashManager {
 
   /**
    * Initialize the hash manager by loading persisted data
+   * Uses a promise-based lock to prevent concurrent initialization
    */
   async init(): Promise<void> {
+    // Fast path: already initialized
+    if (this.initialized) return;
+
+    // If initialization is in progress, wait for it
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+
+    // Start initialization and store the promise
+    this.initPromise = this._doInit();
+    try {
+      await this.initPromise;
+    } finally {
+      // Clear the promise after completion (success or failure)
+      this.initPromise = null;
+    }
+  }
+
+  /**
+   * Internal initialization logic
+   */
+  private async _doInit(): Promise<void> {
+    // Double-check after acquiring the "lock"
     if (this.initialized) return;
 
     try {

@@ -205,13 +205,24 @@ export class GeminiClient {
   }
 
   /**
-   * Call Gemini API directly
+   * Call Gemini API directly with timeout protection
    */
   private async callGemini(
     model: GenerativeModel,
     prompt: string
   ): Promise<{ text: string; tokensUsed: number }> {
-    const result = await model.generateContent(prompt);
+    // Timeout for API calls (configurable, default 2 minutes)
+    const timeoutMs = parseInt(process.env.GEMINI_API_TIMEOUT_MS ?? '120000', 10);
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(`Gemini API call timed out after ${timeoutMs}ms`)), timeoutMs);
+    });
+
+    const result = await Promise.race([
+      model.generateContent(prompt),
+      timeoutPromise
+    ]);
+
     const response = result.response;
     const rawText = response.text();
 

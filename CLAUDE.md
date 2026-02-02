@@ -2270,3 +2270,59 @@ for (let attempt = 1; attempt <= maxRetries; attempt++) {
 throw new Error('Retry loop exhausted unexpectedly');
 ```
 
+### Critical Bug Fixes (Feb 2, 2026)
+
+Comprehensive code review identified and fixed 6 critical bugs across orchestrator and mcp-gateway:
+
+#### Orchestrator Fixes
+
+| File | Issue | Fix |
+|------|-------|-----|
+| `src/utils/cost-tracker.ts` | Silent error suppression in disk save | Added error logging to `.catch()` handler |
+| `src/core/file-hash-manager.ts` | Race condition in `init()` when called concurrently | Added promise-based locking pattern with `initPromise` |
+| `src/agents/gemini-client.ts` | No timeout on Gemini API calls - could hang indefinitely | Added `Promise.race()` with configurable timeout |
+
+#### New Environment Variable
+
+```bash
+# Gemini API timeout (milliseconds)
+GEMINI_API_TIMEOUT_MS=120000           # 2 min default
+```
+
+**Gotcha #8: Promise.race() for API timeouts**
+```typescript
+// ❌ Wrong - no timeout protection
+const result = await model.generateContent(prompt);
+
+// ✅ Correct - timeout with Promise.race()
+const timeoutMs = parseInt(process.env.GEMINI_API_TIMEOUT_MS ?? '120000', 10);
+const timeoutPromise = new Promise<never>((_, reject) => {
+  setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs);
+});
+const result = await Promise.race([model.generateContent(prompt), timeoutPromise]);
+```
+
+**Gotcha #9: Promise-based locking for concurrent initialization**
+```typescript
+// ❌ Wrong - race condition when init() called concurrently
+async init(): Promise<void> {
+  if (this.initialized) return;
+  // ... initialization logic
+  this.initialized = true;
+}
+
+// ✅ Correct - promise-based lock
+private initPromise: Promise<void> | null = null;
+
+async init(): Promise<void> {
+  if (this.initialized) return;
+  if (this.initPromise) return this.initPromise;
+  this.initPromise = this._doInit();
+  try {
+    await this.initPromise;
+  } finally {
+    this.initPromise = null;
+  }
+}
+```
+
