@@ -9,7 +9,7 @@ import { extractShortsHooks } from './agents/shorts-extractor';
 import { matchVoice } from './agents/voice-matcher';
 import { generateNotebookLMScripts, buildAudioConfig, printNextSteps, checkAndUpdateAudioStatus } from './agents/notebooklm-generator';
 import { logger } from './utils/logger';
-import { safeJsonParse } from './utils/json-parse';
+import { safeJsonParse, normalizeScriptSegments } from './utils/json-parse';
 import { fileHashManager } from './core/file-hash-manager';
 import { modelDegradation } from './services/model-degradation';
 import { ProgressTracker, ProcessingStage } from './core/processing-stages';
@@ -201,15 +201,26 @@ ${rawContent}`;
       priority: 'high',
       preferredModel: modelConfig.name
     });
-    const scriptData = safeJsonParse<{
+    const scriptDataRaw = safeJsonParse<{
       script: Array<{
         timestamp: string;
         voiceover: string;
-        visual_hint: 'code_block' | 'diagram' | 'text_animation' | 'b-roll' | 'screen_recording' | 'talking_head_placeholder';
+        visual_hint: string;
         estimated_duration_seconds: number;
       }>;
       estimated_duration_seconds: number;
     }>(scriptResult.text, { projectId, operation: 'scriptGeneration' });
+
+    // Normalize visual_hint values (Gemini sometimes generates 'b_roll' instead of 'b-roll')
+    const scriptData = {
+      ...scriptDataRaw,
+      script: normalizeScriptSegments(scriptDataRaw.script ?? []) as Array<{
+        timestamp: string;
+        voiceover: string;
+        visual_hint: 'code_block' | 'diagram' | 'text_animation' | 'b-roll' | 'screen_recording' | 'talking_head_placeholder';
+        estimated_duration_seconds: number;
+      }>
+    };
     const script = scriptData.script ?? [];
     const estimated_duration_seconds = scriptData.estimated_duration_seconds ?? 60;
 

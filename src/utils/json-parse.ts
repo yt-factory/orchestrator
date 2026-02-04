@@ -1,6 +1,58 @@
 import { logger } from './logger';
 
 /**
+ * Normalizes visual_hint values from LLM responses.
+ * Gemini sometimes generates 'b_roll' instead of 'b-roll'.
+ */
+const VISUAL_HINT_NORMALIZATION: Record<string, string> = {
+  'b_roll': 'b-roll',
+  'broll': 'b-roll',
+  'B-roll': 'b-roll',
+  'B_roll': 'b-roll',
+  'b-Roll': 'b-roll',
+};
+
+/**
+ * Normalizes script segments to handle LLM inconsistencies.
+ * Specifically handles visual_hint variations.
+ */
+export function normalizeScriptSegments(segments: unknown[]): unknown[] {
+  if (!Array.isArray(segments)) return segments;
+
+  return segments.map((segment) => {
+    if (segment && typeof segment === 'object' && 'visual_hint' in segment) {
+      const seg = segment as Record<string, unknown>;
+      const hint = seg.visual_hint as string;
+      if (hint && VISUAL_HINT_NORMALIZATION[hint]) {
+        return {
+          ...seg,
+          visual_hint: VISUAL_HINT_NORMALIZATION[hint],
+        };
+      }
+    }
+    return segment;
+  });
+}
+
+/**
+ * Normalizes the entire content_engine object to handle LLM inconsistencies.
+ */
+export function normalizeContentEngine(contentEngine: unknown): unknown {
+  if (!contentEngine || typeof contentEngine !== 'object') return contentEngine;
+
+  const ce = contentEngine as Record<string, unknown>;
+
+  if (ce.script && Array.isArray(ce.script)) {
+    return {
+      ...ce,
+      script: normalizeScriptSegments(ce.script),
+    };
+  }
+
+  return contentEngine;
+}
+
+/**
  * Safely parse JSON from Gemini response with error handling.
  * Returns the parsed object or throws with helpful error context.
  */
