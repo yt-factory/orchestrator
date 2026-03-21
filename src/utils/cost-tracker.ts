@@ -1,5 +1,6 @@
 import { writeFile, readFile } from 'fs/promises';
 import type { CostTracking } from '../core/manifest';
+import { logger } from './logger';
 
 // 2026 估算价格 (per 1M tokens) - Gemini 3 series (preview naming convention)
 const TOKEN_PRICES_USD: Record<string, number> = {
@@ -49,8 +50,7 @@ export class CostTracker {
 
     // 异步保存
     this.saveToDisk().catch((error) => {
-      // Log disk write errors instead of silently swallowing them
-      console.error('[CostTracker] Failed to save to disk:', error);
+      logger.error('CostTracker failed to save to disk', { error: String(error) });
     });
   }
 
