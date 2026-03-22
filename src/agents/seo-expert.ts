@@ -1,6 +1,8 @@
 import type { SEOData, TrendKeyword, RegionalSEOSchema } from '../core/manifest';
 import type { GeminiClient } from './gemini-client';
 import type { TrendsHook } from './trends-hook';
+import type { ChannelProfile } from '../core/channel-profile';
+import { rankTitles } from '../prompts/title-ranker';
 import { logger } from '../utils/logger';
 import { safeJsonParse, safeExtract } from '../utils/json-parse';
 
@@ -280,7 +282,8 @@ export async function generateMultiLangSEO(
   rawContent: string,
   projectId: string,
   geminiClient: GeminiClient,
-  trendsHook: TrendsHook
+  trendsHook: TrendsHook,
+  profile: ChannelProfile
 ): Promise<SEOData> {
   // Step 0: 获取热词 (含 Authority)
   const topic = await extractPrimaryTopic(rawContent, geminiClient, projectId);
@@ -320,11 +323,22 @@ export async function generateMultiLangSEO(
     contains_established_trend: boolean;
   }> = [];
 
+  const primaryLanguage = profile.primary_language ?? 'en';
+
   for (const [locale, persona] of Object.entries(REGIONAL_PERSONAS)) {
-    const personalizedPersona = persona.replace(
-      '{established_trends}',
-      establishedTrends.join(', ') || 'none available'
-    );
+    // Inject channel profile voice/audience context alongside existing persona
+    const profileContext = [
+      `Channel tone: ${profile.voice.tone.join(', ')}`,
+      `Target demographics: ${profile.audience.demographics}`,
+    ].join('\n');
+
+    const personalizedPersona = [
+      persona.replace(
+        '{established_trends}',
+        establishedTrends.join(', ') || 'none available'
+      ),
+      profileContext,
+    ].join('\n');
 
     let titles = await generateRegionalTitles(
       geminiClient,
@@ -352,6 +366,19 @@ export async function generateMultiLangSEO(
         personalizedPersona,
         validation.missingTrends
       );
+    }
+
+    // Rank titles by CTR potential for the primary language only
+    if (locale === primaryLanguage && titles.length > 0) {
+      titles = await rankTitles(titles, profile, core_facts, geminiClient, projectId);
+      const bestTitle = titles[0];
+      if (bestTitle !== undefined) {
+        logger.info('Best ranked title for primary language', {
+          projectId,
+          locale,
+          bestTitle,
+        });
+      }
     }
 
     const description = await generateRegionalDescription(

@@ -281,6 +281,18 @@ export const CostTrackingSchema = z.object({
 });
 
 // ============================================
+// 质量评分 (Quality Tracking)
+// ============================================
+
+export const QualityScoresSchema = z.object({
+  script_confidence: z.number().min(1).max(10).optional(),
+  seo_confidence: z.number().min(1).max(10).optional(),
+  notebooklm_confidence: z.number().min(1).max(10).optional(),
+  best_title_ctr_score: z.number().min(1).max(10).optional(),
+  retries_needed: z.number().default(0),
+});
+
+// ============================================
 // 完整 Project Manifest
 // ============================================
 
@@ -351,6 +363,9 @@ export const ProjectManifestSchema = z.object({
     en: NotebookLMScriptMetadataSchema.optional(),
     zh: NotebookLMScriptMetadataSchema.optional()
   }).optional(),
+
+  // 质量评分
+  quality_scores: QualityScoresSchema.optional(),
 
   // 运维元数据
   meta: z.object({
@@ -427,3 +442,4 @@ export type RegionalSEO = z.infer<typeof RegionalSEOSchema>;
 export type AudioLanguageConfig = z.infer<typeof AudioLanguageConfigSchema>;
 export type NotebookLMAudioConfig = z.infer<typeof NotebookLMAudioConfigSchema>;
 export type NotebookLMScriptMetadata = z.infer<typeof NotebookLMScriptMetadataSchema>;
+export type QualityScores = z.infer<typeof QualityScoresSchema>;

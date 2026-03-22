@@ -27,14 +27,14 @@ const MODEL_FALLBACK_CHAIN = [
 
 type ModelName = string;
 
-interface GenerateOptions {
+export interface GenerateOptions {
   projectId: string;
   priority?: Priority;
   maxRetries?: number;
   preferredModel?: ModelName;
 }
 
-interface GenerateResult {
+export interface GenerateResult {
   text: string;
   modelUsed: ModelName;
   isFallbackMode: boolean;

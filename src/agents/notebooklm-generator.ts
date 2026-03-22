@@ -12,6 +12,7 @@ import { join } from 'path';
 import { logger } from '../utils/logger';
 import { safeJsonParse } from '../utils/json-parse';
 import type { NotebookLMAudioConfig, AudioLanguageConfig } from '../core/manifest';
+import type { ChannelProfile } from '../core/channel-profile';
 
 // Re-export types for consumers
 export type { NotebookLMAudioConfig, AudioLanguageConfig } from '../core/manifest';
@@ -182,6 +183,34 @@ const ZH_PROMPT_TEMPLATE = `[System Context: 技术团队内部分享 - 哲学�
 }`;
 
 // ============================================
+// Channel Identity Injection
+// ============================================
+
+/**
+ * Build a channel identity preamble to prepend to NotebookLM prompts.
+ * Returns an empty string when no profile is provided, preserving
+ * the default "Geek Zen" format as-is.
+ */
+function buildChannelIdentityPreamble(profile: ChannelProfile): string {
+  const lines: string[] = [
+    '## Channel Identity',
+    `Channel: ${profile.channel_name} - ${profile.tagline}`,
+    `Audience: ${profile.audience.demographics}`,
+    `Tone: ${profile.voice.tone.join(', ')}`,
+  ];
+
+  if (profile.voice.forbidden_words.length > 0) {
+    lines.push(`Forbidden words: ${profile.voice.forbidden_words.join(', ')}`);
+  }
+
+  if (profile.audience.pain_points.length > 0) {
+    lines.push(`Audience pain points: ${profile.audience.pain_points.join('; ')}`);
+  }
+
+  return lines.join('\n') + '\n\n';
+}
+
+// ============================================
 // Script Generation
 // ============================================
 
@@ -253,10 +282,16 @@ async function generateSingleScript(
   rawContent: string,
   projectId: string,
   language: 'en' | 'zh',
-  geminiClient: GeminiClient
+  geminiClient: GeminiClient,
+  profile?: ChannelProfile
 ): Promise<{ content: string; metadata: GeneratedScript['metadata'] }> {
   const promptTemplate = language === 'en' ? EN_PROMPT_TEMPLATE : ZH_PROMPT_TEMPLATE;
-  const prompt = promptTemplate.replace('{raw_content}', rawContent);
+  const basePrompt = promptTemplate.replace('{raw_content}', rawContent);
+
+  // Prepend channel identity when a profile is provided
+  const prompt = profile
+    ? buildChannelIdentityPreamble(profile) + basePrompt
+    : basePrompt;
 
   const result = await geminiClient.generate(prompt, {
     projectId,
@@ -289,7 +324,8 @@ async function generateSingleScript(
  */
 export async function generateNotebookLMScripts(
   config: NotebookLMScriptConfig,
-  geminiClient: GeminiClient
+  geminiClient: GeminiClient,
+  profile?: ChannelProfile
 ): Promise<GeneratedScript[]> {
   const results: GeneratedScript[] = [];
 
@@ -304,7 +340,8 @@ export async function generateNotebookLMScripts(
         config.rawContent,
         config.projectId,
         lang,
-        geminiClient
+        geminiClient,
+        profile
       );
 
       // Save script file

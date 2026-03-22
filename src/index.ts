@@ -9,10 +9,13 @@ import { extractShortsHooks } from './agents/shorts-extractor';
 import { matchVoice } from './agents/voice-matcher';
 import { generateNotebookLMScripts, buildAudioConfig, printNextSteps, checkAndUpdateAudioStatus } from './agents/notebooklm-generator';
 import { logger } from './utils/logger';
-import { safeJsonParse, normalizeScriptSegments } from './utils/json-parse';
+import { normalizeScriptSegments } from './utils/json-parse';
 import { fileHashManager } from './core/file-hash-manager';
 import { modelDegradation } from './services/model-degradation';
 import { ProgressTracker, ProcessingStage } from './core/processing-stages';
+import { ChannelProfileManager } from './core/channel-profile';
+import { buildScriptPrompt } from './prompts/script-prompt-builder';
+import { generateWithSelfScoring, stripQualityMeta } from './prompts/self-scoring';
 
 async function main() {
   logger.info('YT-Factory Orchestrator starting...');
@@ -152,6 +155,10 @@ async function processProject(
   const wordCount = manifest.input_source.word_count;
   const language = manifest.input_source.detected_language ?? 'en';
 
+  // Load channel profile for this project
+  const channelProfileManager = new ChannelProfileManager();
+  const channelProfile = await channelProfileManager.loadForProject(projectId);
+
   // Initialize progress tracker
   const progress = new ProgressTracker(projectId, traceId);
   progress.logPipelineStart(wordCount, language);
@@ -178,30 +185,11 @@ async function processProject(
     // ============================================
     progress.startStage(ProcessingStage.SCRIPT_GENERATION);
 
-    // Build script generation prompt
-    let scriptPrompt = `You are a professional YouTube scriptwriter. Convert this content into a video script with timestamps.
+    // Build rich script prompt from channel profile
+    const scriptPrompt = buildScriptPrompt(rawContent, channelProfile, language);
 
-Each segment must have:
-- timestamp: "MM:SS" format
-- voiceover: the narration text
-- visual_hint: one of code_block, diagram, text_animation, b-roll, screen_recording, talking_head_placeholder
-- estimated_duration_seconds: positive number
-
-Output as JSON: { "script": [...], "estimated_duration_seconds": number }
-
-Content:
-${rawContent}`;
-
-    // Apply degraded prompt if using strict model
-    scriptPrompt = modelDegradation.getDegradedPrompt(scriptPrompt, modelConfig);
-
-    // 生成脚本
-    const scriptResult = await geminiClient.generate(scriptPrompt, {
-      projectId,
-      priority: 'high',
-      preferredModel: modelConfig.name
-    });
-    const scriptDataRaw = safeJsonParse<{
+    // Generate script with self-scoring for quality assurance
+    const scriptScoredResult = await generateWithSelfScoring<{
       script: Array<{
         timestamp: string;
         voiceover: string;
@@ -209,7 +197,13 @@ ${rawContent}`;
         estimated_duration_seconds: number;
       }>;
       estimated_duration_seconds: number;
-    }>(scriptResult.text, { projectId, operation: 'scriptGeneration' });
+    }>(
+      geminiClient,
+      modelDegradation.getDegradedPrompt(scriptPrompt, modelConfig),
+      { projectId, priority: 'high', preferredModel: modelConfig.name },
+      channelProfile.quality.min_confidence_score
+    );
+    const scriptDataRaw = stripQualityMeta(scriptScoredResult.data);
 
     // Normalize visual_hint values (Gemini sometimes generates 'b_roll' instead of 'b-roll')
     const scriptData = {
@@ -227,8 +221,7 @@ ${rawContent}`;
     progress.completeStage(ProcessingStage.SCRIPT_GENERATION, {
       segmentCount: script.length,
       durationSec: estimated_duration_seconds,
-      tokensUsed: scriptResult.tokensUsed,
-      model: scriptResult.modelUsed
+      scriptConfidence: scriptScoredResult.confidence
     });
 
     // ============================================
@@ -236,7 +229,7 @@ ${rawContent}`;
     // ============================================
     progress.startStage(ProcessingStage.TREND_ANALYSIS);
     // Note: generateMultiLangSEO internally handles both trend analysis and SEO generation
-    const seoData = await generateMultiLangSEO(rawContent, projectId, geminiClient, trendsHook);
+    const seoData = await generateMultiLangSEO(rawContent, projectId, geminiClient, trendsHook, channelProfile);
     progress.completeStage(ProcessingStage.SEO_GENERATION, {
       trendCoverage: seoData.trend_coverage_score,
       faqCount: seoData.faq_structured_data.length,
@@ -278,7 +271,8 @@ ${rawContent}`;
         rawContent,
         languages: ['en', 'zh']
       },
-      geminiClient
+      geminiClient,
+      channelProfile
     );
     const audioConfig = buildAudioConfig(notebookLMScripts);
     progress.completeStage(ProcessingStage.NOTEBOOKLM_GENERATION, {
@@ -310,15 +304,15 @@ ${rawContent}`;
         }
       };
       m.meta.processing_time_ms = pipelineElapsedMs;
-      m.meta.model_used = scriptResult.modelUsed;
-      m.meta.is_fallback_mode = scriptResult.isFallbackMode;
+      m.meta.model_used = modelConfig.name;
+      m.meta.is_fallback_mode = manifest.meta.is_fallback_mode;
 
       // Update per-project cost tracking
       m.meta.cost.total_tokens_used = projectTokensUsed;
       m.meta.cost.api_calls_count = globalCost.api_calls_count - (manifest.meta.cost?.api_calls_count ?? 0);
       // Estimate cost based on primary model used
-      const pricePerMillion = scriptResult.modelUsed.includes('pro') ? 5.0 :
-                              scriptResult.modelUsed.includes('flash') ? 0.5 : 0.15;
+      const pricePerMillion = modelConfig.name.includes('pro') ? 5.0 :
+                              modelConfig.name.includes('flash') ? 0.5 : 0.15;
       m.meta.cost.estimated_cost_usd = (projectTokensUsed / 1_000_000) * pricePerMillion;
 
       // Add NotebookLM audio configuration
@@ -337,11 +331,17 @@ ${rawContent}`;
           generated_at: new Date().toISOString()
         };
       }
+
+      // Populate quality scores from self-scoring results
+      m.quality_scores = {
+        script_confidence: scriptScoredResult.confidence,
+        retries_needed: scriptScoredResult.confidence < channelProfile.quality.min_confidence_score ? 1 : 0,
+      };
     });
 
     progress.completeStage(ProcessingStage.MANIFEST_UPDATE, {
       tokensUsed: projectTokensUsed,
-      estimatedCostUsd: (projectTokensUsed / 1_000_000) * (scriptResult.modelUsed.includes('pro') ? 5.0 : 0.5)
+      estimatedCostUsd: (projectTokensUsed / 1_000_000) * (modelConfig.name.includes('pro') ? 5.0 : 0.5)
     });
 
     // ============================================
@@ -359,7 +359,7 @@ ${rawContent}`;
 
     // Log pipeline completion summary
     progress.logPipelineComplete({
-      modelUsed: scriptResult.modelUsed,
+      modelUsed: modelConfig.name,
       tokensUsed: projectTokensUsed,
       trendCoverage: seoData.trend_coverage_score,
       shortsCount: shortsData.hooks.length,
