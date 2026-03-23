@@ -381,19 +381,40 @@ export class AIOFeedbackLoop {
   }
 
   /**
-   * Placeholder for actual YouTube Analytics API integration
-   * This would be implemented via mcp-gateway
+   * Fetch AIO performance data from completed project manifests.
+   * Uses FAQ data from manifests as the source of truth.
+   * Real YouTube AIO attribution tracking would require Search Console API integration.
    */
   private async fetchPerformanceData(
     videoIds: string[]
   ): Promise<AIOPerformanceData[]> {
-    // TODO: Implement actual API call to mcp-gateway
-    // This is a placeholder that returns empty data
-    logger.debug(
-      'fetchPerformanceData placeholder called - implement via mcp-gateway',
-      { videoIds }
-    );
+    const { loadCompletedProjects } = await import('./performance-loader');
+    const manifests = await loadCompletedProjects();
+    const results: AIOPerformanceData[] = [];
 
-    return [];
+    for (const manifest of manifests) {
+      if (!videoIds.includes(manifest.project_id)) continue;
+
+      const faqItems = manifest.content_engine?.seo?.faq_structured_data ?? [];
+      if (faqItems.length === 0) continue;
+
+      results.push({
+        videoId: manifest.project_id,
+        faqItems: faqItems.map(faq => ({
+          question: faq.question,
+          answer: faq.answer,
+          appearedInAIO: false, // Default - real tracking requires Search Console API
+        })),
+        overallAIOVisibility: false,
+        timestamp: manifest.updated_at,
+      });
+    }
+
+    logger.info('AIO performance data loaded from manifests', {
+      requested: videoIds.length,
+      found: results.length,
+    });
+
+    return results;
   }
 }

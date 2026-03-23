@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "feedback": "bun run src/cli/feedback.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
