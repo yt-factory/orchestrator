@@ -334,7 +334,7 @@ async function processProject(
 
       // Populate quality scores from self-scoring results
       m.quality_scores = {
-        script_confidence: scriptScoredResult.confidence,
+        script_confidence: Math.max(1, Math.min(10, scriptScoredResult.confidence)),
         retries_needed: scriptScoredResult.confidence < channelProfile.quality.min_confidence_score ? 1 : 0,
       };
     });
