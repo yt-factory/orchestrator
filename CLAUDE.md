@@ -3,6 +3,42 @@
 
 ---
 
+## Recent Changes (March 2026)
+
+### Content Quality System (Phase 1-2)
+
+New files added to the orchestrator:
+
+| File | Purpose |
+|------|---------|
+| `src/core/channel-profile.ts` | Channel Profile schema (Zod) + ChannelProfileManager |
+| `channels/default/profile.json` | Default channel profile (general tech/education) |
+| `src/prompts/self-scoring.ts` | Self-scoring generation wrapper (confidence 1-10 + retry) |
+| `src/prompts/script-prompt-builder.ts` | Channel-aware script prompt templates |
+| `src/prompts/title-ranker.ts` | CTR-based title scoring and selection |
+| `src/services/analytics-feedback.ts` | Video performance analysis + profile updater |
+| `src/services/performance-loader.ts` | Scans completed projects for metrics |
+| `src/cli/feedback.ts` | CLI: `bun run feedback [--channel=default] [--days=30] [--dry-run]` |
+| `src/cli/channel.ts` | CLI: `bun run channel create/show/list` |
+
+### How the Quality System Works
+
+1. **Channel Profile** (`channels/{id}/profile.json`) defines channel identity, audience, voice, quality criteria
+2. **Script generation** uses `buildScriptPrompt()` which injects profile context into the Gemini prompt
+3. **Self-scoring**: Gemini rates its own output confidence in the same API call. If below `quality.min_confidence_score`, retries once with self-feedback
+4. **Title ranking**: After generating 5 titles, `rankTitles()` scores them for CTR and reorders (best first)
+5. **Analytics feedback**: `bun run feedback` analyzes completed projects and evolves the Channel Profile
+
+### Key Integration Points
+
+- `src/index.ts` loads channel profile at pipeline start, passes to all generators
+- `src/agents/seo-expert.ts` accepts `profile: ChannelProfile` and injects voice/audience into regional personas
+- `src/agents/notebooklm-generator.ts` accepts optional `profile?: ChannelProfile` and prepends channel identity
+- `src/core/manifest.ts` has `quality_scores` field tracking confidence and retries
+- `generateMultiLangSEO()` signature: `(rawContent, projectId, geminiClient, trendsHook, channelProfile)`
+
+---
+
 ## 🎯 Role Definition
 
 你是一名资深的 **Full-stack Platform Engineer & YouTube Automation Expert**。
