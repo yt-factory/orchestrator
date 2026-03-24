@@ -248,11 +248,17 @@ async function processProject(
     });
 
     // ============================================
-    // Stage 6: Voice Matching
+    // Stage 6: Voice Matching (driven by Channel Profile)
     // ============================================
     progress.startStage(ProcessingStage.VOICE_MATCHING);
-    const mood = 'professional' as const;
-    const contentType = 'tutorial' as const;
+    const mood = (channelProfile.voice.tone[0] === 'energetic' ? 'energetic'
+      : channelProfile.voice.tone[0] === 'calm' ? 'calm'
+      : channelProfile.voice.tone.includes('casual') ? 'casual'
+      : 'professional') as 'professional' | 'casual' | 'energetic' | 'calm';
+    const contentType = (channelProfile.content_formats[0]?.format_id === 'news' ? 'news'
+      : channelProfile.content_formats[0]?.format_id === 'analysis' ? 'analysis'
+      : channelProfile.content_formats[0]?.format_id === 'entertainment' ? 'entertainment'
+      : 'tutorial') as 'tutorial' | 'news' | 'analysis' | 'entertainment';
     const voice = matchVoice(mood, contentType, language);
     progress.completeStage(ProcessingStage.VOICE_MATCHING, {
       provider: voice?.provider,
@@ -312,7 +318,7 @@ async function processProject(
       m.meta.cost.api_calls_count = globalCost.api_calls_count - (manifest.meta.cost?.api_calls_count ?? 0);
       // Estimate cost based on primary model used
       const pricePerMillion = modelConfig.name.includes('pro') ? 5.0 :
-                              modelConfig.name.includes('flash') ? 0.5 : 0.15;
+                              modelConfig.name.includes('2.5') ? 0.15 : 0.5;
       m.meta.cost.estimated_cost_usd = (projectTokensUsed / 1_000_000) * pricePerMillion;
 
       // Add NotebookLM audio configuration
@@ -322,7 +328,7 @@ async function processProject(
       m.notebooklm_scripts = {};
       for (const script of notebookLMScripts) {
         m.notebooklm_scripts[script.language] = {
-          title: script.metadata.bugReport.slice(0, 50) || 'Geek Zen Episode',
+          title: script.metadata.bugReport.slice(0, 50) || channelProfile.channel_name,
           bug_report: script.metadata.bugReport,
           root_cause: script.metadata.rootCause,
           hotfix: script.metadata.hotfix,
@@ -341,7 +347,7 @@ async function processProject(
 
     progress.completeStage(ProcessingStage.MANIFEST_UPDATE, {
       tokensUsed: projectTokensUsed,
-      estimatedCostUsd: (projectTokensUsed / 1_000_000) * (modelConfig.name.includes('pro') ? 5.0 : 0.5)
+      estimatedCostUsd: (projectTokensUsed / 1_000_000) * (modelConfig.name.includes('pro') ? 5.0 : modelConfig.name.includes('2.5') ? 0.15 : 0.5)
     });
 
     // ============================================
@@ -370,8 +376,9 @@ async function processProject(
     printNextSteps(projectId, projectDir, notebookLMScripts);
 
   } catch (error) {
-    // Log pipeline error with stage context
-    progress.logPipelineError(ProcessingStage.SCRIPT_GENERATION, error as Error);
+    // Log pipeline error with the stage that was actually running when it failed
+    const failedStage = progress.getCurrentStage() ?? ProcessingStage.SCRIPT_GENERATION;
+    progress.logPipelineError(failedStage, error as Error);
     // Use new intelligent error handling with degradation support
     await workflowManager.handleError(projectId, error as Error, 'analyzing');
   }

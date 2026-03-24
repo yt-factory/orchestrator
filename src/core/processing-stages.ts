@@ -104,6 +104,13 @@ export class ProgressTracker {
   }
 
   /**
+   * Get the stage that is currently running (for error reporting)
+   */
+  getCurrentStage(): ProcessingStage | null {
+    return STAGE_ORDER[this.currentStageIndex] ?? null;
+  }
+
+  /**
    * Log the start of the pipeline
    */
   logPipelineStart(wordCount: number, language: string): void {
