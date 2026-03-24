@@ -36,6 +36,26 @@ New files added to the orchestrator:
 - `src/agents/notebooklm-generator.ts` accepts optional `profile?: ChannelProfile` and prepends channel identity
 - `src/core/manifest.ts` has `quality_scores` field tracking confidence and retries
 - `generateMultiLangSEO()` signature: `(rawContent, projectId, geminiClient, trendsHook, channelProfile)`
+- Voice matching (Stage 6) derives `mood` and `contentType` from Channel Profile, not hardcoded values
+- `media_preference` in manifest reflects actual channel personality, driving correct theme selection in video-renderer
+
+### Sovereign Engineer Review (March 24, 2026)
+
+Fixes applied from deep architectural review:
+
+| Fix | Root Cause | Impact |
+|-----|-----------|--------|
+| Voice matching from Channel Profile | Hardcoded 'professional'/'tutorial' made every video use same theme | All videos now theme-correctly |
+| Error stage tracking via `getCurrentStage()` | Catch block always reported SCRIPT_GENERATION | Error logs now show actual failing stage |
+| Timer leak fix in `callGemini` | `setTimeout` not cleared on success caused unhandled rejection | Clean shutdown, no spurious error logs |
+| Channel-aware fallback title | Hardcoded 'Geek Zen Episode' in general platform | Uses `channelProfile.channel_name` |
+| Cost calculation 3-tier consistency | gemini-2.5-flash mispriced at $0.50 instead of $0.15 | Accurate cost reporting |
+
+### Known Limitations
+
+- No concurrency guard on `processProject` — heartbeat could trigger duplicate processing (low probability)
+- `ChannelProfileManager` instantiated per-project (acceptable: stateless disk reader)
+- Audio quality report not consumed by render pipeline (available for manual inspection)
 
 ---
 
