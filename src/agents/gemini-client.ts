@@ -1,8 +1,8 @@
 import { GoogleGenerativeAI, type GenerativeModel } from '@google/generative-ai';
-import { TokenBucket } from '../infra/token-bucket';
-import { PriorityQueue, type Priority } from '../infra/priority-queue';
-import { CircuitBreaker, CircuitOpenError } from '../infra/circuit-breaker';
-import { CostTracker } from '../utils/cost-tracker';
+import { TokenBucket } from '../llm/base/token-bucket';
+import { PriorityQueue, type Priority } from '../llm/base/priority-queue';
+import { CircuitBreaker, CircuitOpenError } from '../llm/base/circuit-breaker';
+import { CostTracker } from '../llm/base/cost-tracker';
 import { logger } from '../utils/logger';
 import { withRetry } from '../utils/retry';
 

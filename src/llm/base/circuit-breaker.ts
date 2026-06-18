@@ -1,4 +1,6 @@
-import { logger } from '../utils/logger';
+// Moved from src/infra/circuit-breaker.ts (V2 LLM provider refactor, 2026-06-18).
+// Hoisted to llm/base/ as shared provider infrastructure. Logic unchanged.
+import { logger } from '../../utils/logger';
 
 type CircuitState = 'closed' | 'open' | 'half-open';
 

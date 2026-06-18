@@ -1,3 +1,6 @@
+// Moved from src/infra/token-bucket.ts (V2 LLM provider refactor, 2026-06-18).
+// Hoisted to llm/base/ as shared provider infrastructure. Logic unchanged.
+
 interface TokenBucketConfig {
   maxTokens: number;
   refillRate: number; // tokens per second

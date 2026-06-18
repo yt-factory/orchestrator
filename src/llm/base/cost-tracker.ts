@@ -1,6 +1,8 @@
+// Moved from src/utils/cost-tracker.ts (V2 LLM provider refactor, 2026-06-18).
+// Hoisted to llm/base/ as shared provider infrastructure. Logic unchanged.
 import { writeFile, readFile } from 'fs/promises';
-import type { CostTracking } from '../core/manifest';
-import { logger } from './logger';
+import type { CostTracking } from '../../core/manifest';
+import { logger } from '../../utils/logger';
 
 // 2026 pricing (per 1M tokens, blended input+output estimate)
 // Gemini 3.1 Pro: $2/1M input + $12/1M output ≈ $7/1M blended

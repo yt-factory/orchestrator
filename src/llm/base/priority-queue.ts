@@ -1,3 +1,6 @@
+// Moved from src/infra/priority-queue.ts (V2 LLM provider refactor, 2026-06-18).
+// Hoisted to llm/base/ as shared provider infrastructure. Logic unchanged.
+
 export type Priority = 'high' | 'medium' | 'low';
 
 interface QueueItem {
