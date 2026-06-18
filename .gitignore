@@ -38,3 +38,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Auto-generated claude-mem stubs (nested orchestrator directory)
 orchestrator/
+
+# Auto-generated claude-mem context stubs
+CLAUDE.md
+**/CLAUDE.md
