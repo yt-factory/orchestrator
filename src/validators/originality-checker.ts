@@ -1,5 +1,5 @@
 import { OriginalityScore, SEOData, ScriptSegment } from '../core/manifest';
-import { GeminiClient } from '../agents/gemini-client';
+import type { BaseLLMProvider } from '../llm/providers';
 import { logger } from '../utils/logger';
 
 // Target thresholds
@@ -16,7 +16,7 @@ const MIN_OVERALL_SCORE = 0.85;
  * 3. Visual style fingerprint uniqueness
  */
 export class OriginalityChecker {
-  constructor(private geminiClient: GeminiClient) {}
+  constructor(private provider: BaseLLMProvider) {}
 
   /**
    * Main validation entry point
@@ -187,7 +187,9 @@ Rate the uniqueness of the new script on a scale of 0 to 1, where:
 Output ONLY a JSON object: { "uniqueness": number, "similar_elements": string[], "unique_elements": string[] }
 `;
 
-      const result = await this.geminiClient.generate(prompt, {
+      // tier: fast — originality/uniqueness scoring is analysis.
+      const result = await this.provider.complete('', prompt, {
+        tier: 'fast',
         projectId,
         priority: 'medium'
       });

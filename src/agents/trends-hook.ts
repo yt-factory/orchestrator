@@ -1,7 +1,7 @@
 import type { TrendKeyword } from '../core/manifest';
 import { readFile, writeFile } from 'fs/promises';
 import { logger } from '../utils/logger';
-import type { GeminiClient } from './gemini-client';
+import type { BaseLLMProvider } from '../llm/providers';
 
 const CACHE_TTL_HOURS = 6;
 const DECAY_THRESHOLD_HOURS = 24;
@@ -30,14 +30,14 @@ export class TrendsHook {
     this.loaded = true;
   }
 
-  async getHotKeywords(topic: string, geminiClient: GeminiClient, projectId: string): Promise<TrendKeyword[]> {
+  async getHotKeywords(topic: string, provider: BaseLLMProvider, projectId: string): Promise<TrendKeyword[]> {
     await this.init();
 
     // Step 1: 应用衰减
     this.applyDecay();
 
     // Step 2: 从 API 获取新热词
-    const rawKeywords = await this.fetchFromTrends(topic, geminiClient, projectId);
+    const rawKeywords = await this.fetchFromTrends(topic, provider, projectId);
 
     // Step 3: 更新 Authority
     const enrichedKeywords = rawKeywords.map((kw) => this.enrichWithAuthority(kw));
@@ -179,7 +179,7 @@ export class TrendsHook {
    */
   private async fetchFromTrends(
     topic: string,
-    geminiClient: GeminiClient,
+    provider: BaseLLMProvider,
     projectId: string
   ): Promise<string[]> {
     const prompt = `Given the topic "${topic}", list 5-10 currently trending keywords or phrases related to this topic that would perform well on YouTube. Focus on search volume and recency.
@@ -187,7 +187,9 @@ export class TrendsHook {
 Output as JSON: { "keywords": string[] }`;
 
     try {
-      const result = await geminiClient.generate(prompt, {
+      // tier: fast — trending-keyword extraction.
+      const result = await provider.complete('', prompt, {
+        tier: 'fast',
         projectId,
         priority: 'medium'
       });

@@ -1,5 +1,5 @@
 import { MonetizationInfo } from '../core/manifest';
-import { GeminiClient } from '../agents/gemini-client';
+import type { BaseLLMProvider } from '../llm/providers';
 import { logger } from '../utils/logger';
 
 // Configuration thresholds
@@ -64,7 +64,7 @@ const REGIONAL_RESTRICTIONS: Record<string, string[]> = {
  * Pre-scores content for ad suitability before resource-intensive generation
  */
 export class MonetizationOptimizer {
-  constructor(private geminiClient: GeminiClient) {}
+  constructor(private provider: BaseLLMProvider) {}
 
   /**
    * Pre-score content before generation
@@ -321,7 +321,9 @@ If content appears safe, return empty risks array with overall_risk: 0.
 `;
 
     try {
-      const result = await this.geminiClient.generate(prompt, {
+      // tier: fast — ad-suitability analysis / keyword reframing, no creative bar.
+      const result = await this.provider.complete('', prompt, {
+        tier: 'fast',
         projectId,
         priority: 'medium'
       });
@@ -448,7 +450,9 @@ Output ONLY the reframed outline, nothing else.
 `;
 
     try {
-      const result = await this.geminiClient.generate(prompt, {
+      // tier: fast — ad-suitability analysis / keyword reframing, no creative bar.
+      const result = await this.provider.complete('', prompt, {
+        tier: 'fast',
         projectId,
         priority: 'medium'
       });

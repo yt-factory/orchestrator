@@ -1,5 +1,5 @@
 import type { ShortsExtraction, ShortsHook, ScriptSegment } from '../core/manifest';
-import type { GeminiClient } from './gemini-client';
+import type { BaseLLMProvider } from '../llm/providers';
 import { logger } from '../utils/logger';
 import { safeJsonParse } from '../utils/json-parse';
 
@@ -102,15 +102,17 @@ function injectCTA(hook: ShortsHook): ShortsHook {
 export async function extractShortsHooks(
   script: ScriptSegment[],
   projectId: string,
-  geminiClient: GeminiClient
+  provider: BaseLLMProvider
 ): Promise<ShortsExtraction> {
   const fullScript = script
     .map((s) => `[${s.timestamp}] ${s.voiceover}`)
     .join('\n');
 
-  const result = await geminiClient.generate(
+  // tier: smart — viral hook ideation is creative work.
+  const result = await provider.complete(
+    '',
     SHORTS_EXTRACTION_PROMPT + '\n\nScript:\n' + fullScript,
-    { projectId, priority: 'low' }
+    { tier: 'smart', projectId, priority: 'low' }
   );
 
   const parsed = safeJsonParse<{

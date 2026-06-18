@@ -16,6 +16,8 @@ import { ProgressTracker, ProcessingStage } from './core/processing-stages';
 import { ChannelProfileManager } from './core/channel-profile';
 import { buildScriptPrompt } from './prompts/script-prompt-builder';
 import { generateWithSelfScoring, stripQualityMeta } from './prompts/self-scoring';
+import { getProvider, type BaseLLMProvider } from './llm/providers';
+import { CostTracker } from './llm/base/cost-tracker';
 
 const onceMode = process.argv.includes('--once');
 
@@ -25,7 +27,12 @@ async function main() {
   // ============================================
   // Step 1: 初始化组件
   // ============================================
-  const geminiClient = new GeminiClient();
+  // Shared cost tracker: the pipeline provider and the NotebookLM Gemini client
+  // both record into it, so processProject reads one per-project cost snapshot.
+  const sharedCostTracker = new CostTracker();
+  const provider = getProvider(undefined, { costTracker: sharedCostTracker });
+  // NotebookLM keeps the legacy direct-Gemini path (not tier-routed, not DeepSeek).
+  const notebooklmClient = new GeminiClient({ costTracker: sharedCostTracker });
   const trendsHook = new TrendsHook();
   const workflowManager = new WorkflowManager();
 
@@ -37,7 +44,8 @@ async function main() {
   // Step 2: CRITICAL - Warm-up 必须在 Watcher 之前
   // ============================================
   logger.info('Warming up connections...');
-  await geminiClient.warmUp();
+  await provider.warmUp();
+  await notebooklmClient.warmUp();
   await trendsHook.init();  // Load trends cache from disk
   await fileHashManager.init();  // Load file hash cache from disk
   logger.info('Connection pool ready', {
@@ -51,7 +59,7 @@ async function main() {
   if (!onceMode) {
     workflowManager.setRecoveryCallback(async (projectId) => {
       logger.info('Reprocessing recovered stale project', { projectId });
-      await processProject(projectId, workflowManager, geminiClient, trendsHook);
+      await processProject(projectId, workflowManager, provider, trendsHook, notebooklmClient);
     });
     workflowManager.startHeartbeat();
     logger.info('Heartbeat started');
@@ -97,14 +105,15 @@ async function main() {
         pendingProjects.add(projectId);
 
         // 触发处理流程
-        await processProject(projectId, workflowManager, geminiClient, trendsHook);
+        await processProject(projectId, workflowManager, provider, trendsHook, notebooklmClient);
 
         // Auto-exit in --once mode when all projects done
         pendingProjects.delete(projectId);
         if (onceMode && allFilesDetected && pendingProjects.size === 0) {
           logger.info('All files processed, exiting (--once mode)');
           await watcher.stop();
-          await geminiClient.drain();
+          await provider.drain();
+          await notebooklmClient.drain();
           process.exit(0);
         }
       },
@@ -128,7 +137,8 @@ async function main() {
       if (pendingProjects.size === 0) {
         logger.info('No files found in incoming, exiting (--once mode)');
         await watcher.stop();
-        await geminiClient.drain();
+        await provider.drain();
+        await notebooklmClient.drain();
         process.exit(0);
       }
     }, 3000);
@@ -138,7 +148,7 @@ async function main() {
   // Step 5: 打印状态
   // ============================================
   logger.info('System ready', {
-    availableTokens: geminiClient.getAvailableTokens(),
+    availableTokens: provider.getAvailableTokens(),
     establishedTrends: trendsHook.getEstablishedKeywords().length
   });
 
@@ -150,10 +160,11 @@ async function main() {
 
     await watcher.stop();
     workflowManager.stopHeartbeat();
-    await geminiClient.drain();
+    await provider.drain();
+    await notebooklmClient.drain();
 
-    // 打印最终成本报告
-    const costReport = geminiClient.getCostReport();
+    // 打印最终成本报告 (shared tracker: includes NotebookLM cost)
+    const costReport = provider.getCostReport();
     logger.info('Final cost report', costReport as unknown as Record<string, unknown>);
 
     logger.info('Shutdown complete');
@@ -177,10 +188,12 @@ async function main() {
 async function processProject(
   projectId: string,
   workflowManager: WorkflowManager,
-  geminiClient: GeminiClient,
-  trendsHook: TrendsHook
+  provider: BaseLLMProvider,
+  trendsHook: TrendsHook,
+  notebooklmClient: GeminiClient,
 ): Promise<void> {
-  const startTokens = geminiClient.getTokenSnapshot();
+  // Shared cost tracker, so this snapshot spans provider + NotebookLM calls.
+  const startTokens = provider.getTokenSnapshot();
 
   // Load manifest first to get traceId for progress tracker
   const manifest = await workflowManager.loadManifest(projectId);
@@ -232,9 +245,10 @@ async function processProject(
       }>;
       estimated_duration_seconds: number;
     }>(
-      geminiClient,
+      provider,
       modelDegradation.getDegradedPrompt(scriptPrompt, modelConfig),
-      { projectId, priority: 'high', preferredModel: modelConfig.name },
+      // tier: smart — core creative script generation.
+      { tier: 'smart', projectId, priority: 'high' },
       channelProfile.quality.min_confidence_score
     );
     const scriptDataRaw = stripQualityMeta(scriptScoredResult.data);
@@ -263,7 +277,7 @@ async function processProject(
     // ============================================
     progress.startStage(ProcessingStage.TREND_ANALYSIS);
     // Note: generateMultiLangSEO internally handles both trend analysis and SEO generation
-    const seoData = await generateMultiLangSEO(rawContent, projectId, geminiClient, trendsHook, channelProfile);
+    const seoData = await generateMultiLangSEO(rawContent, projectId, provider, trendsHook, channelProfile);
     progress.completeStage(ProcessingStage.SEO_GENERATION, {
       trendCoverage: seoData.trend_coverage_score,
       faqCount: seoData.faq_structured_data.length,
@@ -274,7 +288,7 @@ async function processProject(
     // Stage 5: Shorts Extraction
     // ============================================
     progress.startStage(ProcessingStage.SHORTS_EXTRACTION);
-    const shortsData = await extractShortsHooks(script, projectId, geminiClient);
+    const shortsData = await extractShortsHooks(script, projectId, provider);
     progress.completeStage(ProcessingStage.SHORTS_EXTRACTION, {
       hooksCount: shortsData.hooks.length,
       topEmotion: shortsData.hooks[0]?.emotional_trigger,
@@ -311,7 +325,7 @@ async function processProject(
         rawContent,
         languages: ['en', 'zh']
       },
-      geminiClient,
+      notebooklmClient,
       channelProfile
     );
     const audioConfig = buildAudioConfig(notebookLMScripts);
@@ -326,9 +340,9 @@ async function processProject(
     progress.startStage(ProcessingStage.MANIFEST_UPDATE);
 
     // Calculate tokens used for this project
-    const endTokens = geminiClient.getTokenSnapshot();
+    const endTokens = provider.getTokenSnapshot();
     const projectTokensUsed = endTokens - startTokens;
-    const globalCost = geminiClient.getCostReport();
+    const globalCost = provider.getCostReport();
     const pipelineElapsedMs = progress.getElapsedMs();
 
     // 更新 manifest

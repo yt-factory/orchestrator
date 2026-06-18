@@ -1,5 +1,5 @@
 import { ShortsCandidate, ScriptSegment } from '../core/manifest';
-import { GeminiClient } from '../agents/gemini-client';
+import type { BaseLLMProvider } from '../llm/providers';
 import { logger } from '../utils/logger';
 
 // Emotion-to-CTA mapping for viral optimization
@@ -92,7 +92,7 @@ const EMOTION_KEYWORDS: Record<string, string[]> = {
  * Extracts high-emotion segments from scripts for YouTube Shorts
  */
 export class ShortsEmotionExtractor {
-  constructor(private geminiClient: GeminiClient) {}
+  constructor(private provider: BaseLLMProvider) {}
 
   /**
    * Main extraction method - finds the best Shorts candidates
@@ -229,7 +229,9 @@ Prioritize:
 `;
 
     try {
-      const result = await this.geminiClient.generate(prompt, {
+      // tier: fast — deep emotion analysis is structured extraction.
+      const result = await this.provider.complete('', prompt, {
+        tier: 'fast',
         projectId,
         priority: 'low'
       });

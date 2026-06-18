@@ -1,5 +1,5 @@
 import type { SEOData, TrendKeyword, RegionalSEOSchema } from '../core/manifest';
-import type { GeminiClient } from './gemini-client';
+import type { BaseLLMProvider } from '../llm/providers';
 import type { TrendsHook } from './trends-hook';
 import type { ChannelProfile } from '../core/channel-profile';
 import { rankTitles } from '../prompts/title-ranker';
@@ -80,7 +80,7 @@ function validateTrendCoverage(
 
 async function extractPrimaryTopic(
   rawContent: string,
-  geminiClient: GeminiClient,
+  provider: BaseLLMProvider,
   projectId: string
 ): Promise<string> {
   const prompt = `Extract the primary topic of this content in 2-5 words. Output as JSON: { "topic": string }
@@ -88,7 +88,9 @@ async function extractPrimaryTopic(
 Content (first 500 chars):
 ${rawContent.slice(0, 500)}`;
 
-  const result = await geminiClient.generate(prompt, {
+  // tier: fast — short structured topic extraction.
+  const result = await provider.complete('', prompt, {
+    tier: 'fast',
     projectId,
     priority: 'high'
   });
@@ -101,7 +103,7 @@ ${rawContent.slice(0, 500)}`;
 }
 
 async function generateRegionalTitles(
-  geminiClient: GeminiClient,
+  provider: BaseLLMProvider,
   projectId: string,
   coreFacts: string[],
   locale: string,
@@ -115,7 +117,9 @@ ${coreFacts.join('\n')}
 Generate exactly 5 high-CTR YouTube titles for the ${locale} market.
 Output as JSON: { "titles": string[] }`;
 
-  const result = await geminiClient.generate(prompt, {
+  // tier: smart — regional title copywriting.
+  const result = await provider.complete('', prompt, {
+    tier: 'smart',
     projectId,
     priority: 'medium'
   });
@@ -128,7 +132,7 @@ Output as JSON: { "titles": string[] }`;
 }
 
 async function forceRegenerateTitlesWithTrends(
-  geminiClient: GeminiClient,
+  provider: BaseLLMProvider,
   projectId: string,
   coreFacts: string[],
   locale: string,
@@ -145,7 +149,9 @@ ${coreFacts.join('\n')}
 Generate 5 high-CTR titles that naturally incorporate the trending keywords.
 Output as JSON: { "titles": string[] }`;
 
-  const result = await geminiClient.generate(forcePrompt, {
+  // tier: smart — title copywriting (trend-forced regeneration).
+  const result = await provider.complete('', forcePrompt, {
+    tier: 'smart',
     projectId,
     priority: 'medium'
   });
@@ -158,7 +164,7 @@ Output as JSON: { "titles": string[] }`;
 }
 
 async function generateRegionalDescription(
-  geminiClient: GeminiClient,
+  provider: BaseLLMProvider,
   projectId: string,
   coreFacts: string[],
   locale: string,
@@ -189,7 +195,9 @@ IMPORTANT formatting rules:
 
 Output as JSON: { "description": string }`;
 
-  const result = await geminiClient.generate(prompt, {
+  // tier: smart — regional description copywriting.
+  const result = await provider.complete('', prompt, {
+    tier: 'smart',
     projectId,
     priority: 'medium'
   });
@@ -208,7 +216,7 @@ function extractCulturalHooks(description: string): string[] {
 }
 
 async function generateFAQ(
-  geminiClient: GeminiClient,
+  provider: BaseLLMProvider,
   projectId: string,
   coreFacts: string[]
 ): Promise<Array<{ question: string; answer: string; related_entities: string[] }>> {
@@ -222,7 +230,9 @@ Each FAQ must have:
 
 Output as JSON: { "faq": [{ "question": string, "answer": string, "related_entities": string[] }] }`;
 
-  const result = await geminiClient.generate(prompt, {
+  // tier: fast — templated FAQ generation.
+  const result = await provider.complete('', prompt, {
+    tier: 'fast',
     projectId,
     priority: 'medium'
   });
@@ -235,7 +245,7 @@ Output as JSON: { "faq": [{ "question": string, "answer": string, "related_entit
 }
 
 async function generateSmartChapters(
-  geminiClient: GeminiClient,
+  provider: BaseLLMProvider,
   projectId: string,
   rawContent: string,
   establishedTrends: string[]
@@ -248,7 +258,9 @@ ${rawContent.slice(0, 2000)}
 
 Output as JSON: { "chapters": string }`;
 
-  const result = await geminiClient.generate(prompt, {
+  // tier: fast — chapter-marker extraction (replaced by pure regex in Phase 5).
+  const result = await provider.complete('', prompt, {
+    tier: 'fast',
     projectId,
     priority: 'medium'
   });
@@ -263,7 +275,7 @@ Output as JSON: { "chapters": string }`;
 async function generateTags(
   coreFacts: string[],
   trends: TrendKeyword[],
-  geminiClient: GeminiClient,
+  provider: BaseLLMProvider,
   projectId: string,
   profile: ChannelProfile
 ): Promise<string[]> {
@@ -294,7 +306,9 @@ ${coreFacts.join('\n')}
 
 Output as JSON: { "tags": string[] }`;
 
-  const result = await geminiClient.generate(prompt, {
+  // tier: fast — supplementary tag suggestions.
+  const result = await provider.complete('', prompt, {
+    tier: 'fast',
     projectId,
     priority: 'low'
   });
@@ -332,13 +346,13 @@ function calculateTrendCoverageScore(
 export async function generateMultiLangSEO(
   rawContent: string,
   projectId: string,
-  geminiClient: GeminiClient,
+  provider: BaseLLMProvider,
   trendsHook: TrendsHook,
   profile: ChannelProfile
 ): Promise<SEOData> {
   // Step 0: 获取热词 (含 Authority)
-  const topic = await extractPrimaryTopic(rawContent, geminiClient, projectId);
-  const allTrends = await trendsHook.getHotKeywords(topic, geminiClient, projectId);
+  const topic = await extractPrimaryTopic(rawContent, provider, projectId);
+  const allTrends = await trendsHook.getHotKeywords(topic, provider, projectId);
   const establishedTrends = allTrends
     .filter((t) => t.authority === 'established')
     .map((t) => t.keyword);
@@ -350,9 +364,11 @@ export async function generateMultiLangSEO(
   });
 
   // Step 1: 提取核心事实
-  const analysisResult = await geminiClient.generate(
+  // tier: fast — structured fact/entity extraction.
+  const analysisResult = await provider.complete(
+    '',
     CONTENT_ANALYST_PROMPT + '\n\nContent:\n' + rawContent,
-    { projectId, priority: 'high' }
+    { tier: 'fast', projectId, priority: 'high' }
   );
   const analysisData = safeJsonParse<{
     core_facts: string[];
@@ -395,7 +411,7 @@ export async function generateMultiLangSEO(
     ].join('\n');
 
     let titles = await generateRegionalTitles(
-      geminiClient,
+      provider,
       projectId,
       core_facts,
       locale,
@@ -413,7 +429,7 @@ export async function generateMultiLangSEO(
       });
 
       titles = await forceRegenerateTitlesWithTrends(
-        geminiClient,
+        provider,
         projectId,
         core_facts,
         locale,
@@ -424,7 +440,7 @@ export async function generateMultiLangSEO(
 
     // Rank titles by CTR potential for the primary language only
     if (locale === primaryLanguage && titles.length > 0) {
-      titles = await rankTitles(titles, profile, core_facts, geminiClient, projectId);
+      titles = await rankTitles(titles, profile, core_facts, provider, projectId);
       const bestTitle = titles[0];
       if (bestTitle !== undefined) {
         logger.info('Best ranked title for primary language', {
@@ -436,7 +452,7 @@ export async function generateMultiLangSEO(
     }
 
     const description = await generateRegionalDescription(
-      geminiClient,
+      provider,
       projectId,
       core_facts,
       locale,
@@ -453,11 +469,11 @@ export async function generateMultiLangSEO(
   }
 
   // Step 3: 生成 FAQ
-  const faq = await generateFAQ(geminiClient, projectId, core_facts);
+  const faq = await generateFAQ(provider, projectId, core_facts);
 
   // Step 4: 生成章节
   const chapters = await generateSmartChapters(
-    geminiClient,
+    provider,
     projectId,
     rawContent,
     establishedTrends
@@ -468,7 +484,7 @@ export async function generateMultiLangSEO(
 
   return {
     primary_language: detectLanguage(rawContent),
-    tags: await generateTags(core_facts, allTrends, geminiClient, projectId, profile),
+    tags: await generateTags(core_facts, allTrends, provider, projectId, profile),
     chapters,
     regional_seo: regionalResults,
     faq_structured_data: faq,

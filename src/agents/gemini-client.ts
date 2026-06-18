@@ -57,7 +57,7 @@ export class GeminiClient {
   private circuitBreaker: CircuitBreaker;
   private mockMode: boolean;
 
-  constructor() {
+  constructor(opts: { costTracker?: CostTracker } = {}) {
     this.mockMode = process.env.MOCK_MODE === 'true';
     const apiKey = process.env.GEMINI_API_KEY;
 
@@ -75,7 +75,9 @@ export class GeminiClient {
     });
 
     this.priorityQueue = new PriorityQueue();
-    this.costTracker = new CostTracker();
+    // Accept an injected shared tracker so the pipeline provider and this
+    // NotebookLM client can report into one per-project cost snapshot.
+    this.costTracker = opts.costTracker ?? new CostTracker();
 
     // Circuit Breaker: Fast-fail after consecutive failures
     const failureThreshold = parseInt(process.env.GEMINI_CIRCUIT_BREAKER_THRESHOLD ?? '5', 10);

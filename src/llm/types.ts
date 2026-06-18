@@ -4,6 +4,7 @@
 // needs a cheap/fast model or the smart model. See CLAUDE_TASK V2 Phase 2.
 
 import type { Priority } from './base/priority-queue';
+import type { CostTracker } from './base/cost-tracker';
 
 /**
  * Capability/cost tier a call site requests.
@@ -62,6 +63,13 @@ export interface ProviderConfig {
   name: string;
   /** Requests-per-minute for the token bucket. Defaults to env LLM_RATE_LIMIT_RPM or 60. */
   rateLimitRpm?: number;
+  /**
+   * Optional shared CostTracker. When injected, multiple clients (e.g. the
+   * pipeline provider and the NotebookLM Gemini client) record into one tracker
+   * so index.ts can read a single per-project cost snapshot. Defaults to a fresh
+   * per-instance tracker.
+   */
+  costTracker?: CostTracker;
   circuitBreaker?: {
     failureThreshold?: number;
     resetTimeoutMs?: number;

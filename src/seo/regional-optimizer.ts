@@ -1,5 +1,5 @@
 import { RegionalSEOSchema, SEOData } from '../core/manifest';
-import { GeminiClient } from '../agents/gemini-client';
+import type { BaseLLMProvider } from '../llm/providers';
 import { logger } from '../utils/logger';
 import { z } from 'zod';
 
@@ -79,7 +79,7 @@ const CONTENT_TYPE_MARKETS: Record<string, string[]> = {
  * Optimizes SEO content for multiple regional markets
  */
 export class RegionalSEOOptimizer {
-  constructor(private geminiClient: GeminiClient) {}
+  constructor(private provider: BaseLLMProvider) {}
 
   /**
    * Generate region-optimized SEO for all target markets
@@ -146,7 +146,9 @@ Output ONLY the category name, nothing else.
 `;
 
     try {
-      const result = await this.geminiClient.generate(prompt, {
+      // tier: fast — content-type classification.
+      const result = await this.provider.complete('', prompt, {
+        tier: 'fast',
         projectId,
         priority: 'low'
       });
@@ -220,7 +222,9 @@ Output as JSON:
 `;
 
     try {
-      const result = await this.geminiClient.generate(prompt, {
+      // tier: smart — regional SEO copy generation.
+      const result = await this.provider.complete('', prompt, {
+        tier: 'smart',
         projectId,
         priority: 'medium'
       });
@@ -273,7 +277,9 @@ Do NOT simply translate. Adapt the message to resonate with the target audience.
 Output ONLY the adapted text, nothing else.
 `;
 
-    const result = await this.geminiClient.generate(prompt, {
+    // tier: smart — translation + localized copy.
+    const result = await this.provider.complete('', prompt, {
+      tier: 'smart',
       projectId,
       priority: 'low'
     });

@@ -18,6 +18,7 @@ import { CircuitBreaker, CircuitOpenError } from './circuit-breaker';
 import { CostTracker } from './cost-tracker';
 import { PriorityQueue, type Priority } from './priority-queue';
 import { logger } from '../../utils/logger';
+import type { CostTracking } from '../../core/manifest';
 import type {
   CompleteOptions,
   CompletionResult,
@@ -55,12 +56,35 @@ export abstract class BaseLLMProvider {
       maxQueueSize: config.priorityQueue?.maxQueueSize ?? 100,
     });
 
-    this.costTracker = new CostTracker();
+    // Use the injected shared tracker if provided, else a fresh per-instance one.
+    this.costTracker = config.costTracker ?? new CostTracker();
   }
 
   /** Initialize provider state (cost tracker disk load, model warm-up, etc.). */
   async warmUp(): Promise<void> {
     await this.costTracker.init();
+  }
+
+  // --- Operational accessors (parity with the legacy GeminiClient surface) ---
+
+  /** Cumulative cost/token report from the (possibly shared) cost tracker. */
+  getCostReport(): CostTracking {
+    return this.costTracker.getReport();
+  }
+
+  /** Snapshot of total tokens used so far (for per-project delta calculation). */
+  getTokenSnapshot(): number {
+    return this.costTracker.getReport().total_tokens_used;
+  }
+
+  /** Currently available rate-limit tokens (for status logging). */
+  getAvailableTokens(): number {
+    return this.rateLimiter.getAvailableTokens();
+  }
+
+  /** Graceful shutdown hook. No connection pool with the direct SDKs. */
+  async drain(): Promise<void> {
+    logger.info('LLM provider drained', { provider: this.name });
   }
 
   /**

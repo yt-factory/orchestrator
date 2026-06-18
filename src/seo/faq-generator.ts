@@ -1,5 +1,5 @@
 import { ExtendedFAQItem, ScriptSegment } from '../core/manifest';
-import { GeminiClient } from '../agents/gemini-client';
+import type { BaseLLMProvider } from '../llm/providers';
 import { logger } from '../utils/logger';
 
 // FAQ patterns with historical AIO success rates
@@ -55,7 +55,7 @@ export class FAQGenerator {
   private aioFeedback: AIOFeedbackHints | null = null;
 
   constructor(
-    private geminiClient: GeminiClient,
+    private provider: BaseLLMProvider,
     aioFeedback?: AIOFeedbackHints
   ) {
     if (aioFeedback) {
@@ -203,7 +203,9 @@ Output as JSON array:
 `;
 
     try {
-      const result = await this.geminiClient.generate(prompt, {
+      // tier: fast — templated AIO FAQ generation.
+      const result = await this.provider.complete('', prompt, {
+        tier: 'fast',
         projectId,
         priority: 'medium'
       });
@@ -361,7 +363,8 @@ Output as JSON array:
 `;
 
     try {
-      const result = await this.geminiClient.generate(prompt, {
+      const result = await this.provider.complete('', prompt, {
+        tier: 'fast',
         projectId,
         priority: 'low'
       });

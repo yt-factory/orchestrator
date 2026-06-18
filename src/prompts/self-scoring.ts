@@ -1,4 +1,5 @@
-import type { GeminiClient, GenerateOptions, GenerateResult } from '../agents/gemini-client';
+import type { BaseLLMProvider } from '../llm/providers';
+import type { CompleteOptions, CompletionResult } from '../llm/types';
 import { safeJsonParse } from '../utils/json-parse';
 import { logger } from '../utils/logger';
 
@@ -56,9 +57,9 @@ function extractQuality(parsed: Record<string, unknown>): QualityMeta {
  * the minimum threshold, returning the best result across all attempts.
  */
 export async function generateWithSelfScoring<T>(
-  geminiClient: GeminiClient,
+  provider: BaseLLMProvider,
   prompt: string,
-  options: GenerateOptions,
+  options: CompleteOptions,
   minConfidence: number,
   maxRetries: number = 1,
 ): Promise<SelfScoredResult<T>> {
@@ -68,10 +69,12 @@ export async function generateWithSelfScoring<T>(
   const totalAttempts = 1 + maxRetries;
 
   for (let attempt = 1; attempt <= totalAttempts; attempt++) {
-    const result: GenerateResult = await geminiClient.generate(currentPrompt, options);
+    // Phase 2: whole prompt passed as user content (system prompt empty until
+    // Phase 4 externalizes/splits prompts for prefix-cache).
+    const result: CompletionResult = await provider.complete('', currentPrompt, options);
 
     const parsed = safeJsonParse<Record<string, unknown>>(result.text, {
-      projectId: options.projectId,
+      projectId: options.projectId ?? 'unknown',
       operation: 'self-scoring',
     });
 
@@ -83,7 +86,7 @@ export async function generateWithSelfScoring<T>(
       attempt,
       confidence: quality.confidence,
       reason: quality.reason,
-      modelUsed: result.modelUsed,
+      model: result.model,
     });
 
     const scored: SelfScoredResult<T> = {

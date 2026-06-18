@@ -1,5 +1,5 @@
 import type { ChannelProfile } from '../core/channel-profile';
-import type { GeminiClient } from '../agents/gemini-client';
+import type { BaseLLMProvider } from '../llm/providers';
 import { safeJsonParse } from '../utils/json-parse';
 import { logger } from '../utils/logger';
 
@@ -69,7 +69,7 @@ export async function rankTitles(
   titles: string[],
   profile: ChannelProfile,
   coreFacts: string[],
-  geminiClient: GeminiClient,
+  provider: BaseLLMProvider,
   projectId: string,
 ): Promise<string[]> {
   if (titles.length === 0) {
@@ -79,7 +79,9 @@ export async function rankTitles(
   try {
     const prompt = buildTitleRankingPrompt(titles, profile, coreFacts);
 
-    const result = await geminiClient.generate(prompt, {
+    // tier: fast — ranking/scoring, no creative bar.
+    const result = await provider.complete('', prompt, {
+      tier: 'fast',
       projectId,
       priority: 'low',
     });
