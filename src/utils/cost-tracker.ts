@@ -2,10 +2,15 @@ import { writeFile, readFile } from 'fs/promises';
 import type { CostTracking } from '../core/manifest';
 import { logger } from './logger';
 
-// 2026 估算价格 (per 1M tokens) - Gemini 3 series (preview naming convention)
+// 2026 pricing (per 1M tokens, blended input+output estimate)
+// Gemini 3.1 Pro: $2/1M input + $12/1M output ≈ $7/1M blended
+// Gemini 3 Flash: ~$0.50/1M blended
+// Gemini 2.5 Flash: ~$0.15/1M blended
 const TOKEN_PRICES_USD: Record<string, number> = {
-  'gemini-3-pro-preview': 5.00,
-  'gemini-3-flash-preview': 0.50,
+  'gemini-3.1-pro-preview': 7.00,
+  'gemini-3-pro-preview': 5.00,   // legacy fallback
+  'gemini-3-flash': 0.50,
+  'gemini-3-flash-preview': 0.50, // legacy fallback
   'gemini-2.5-flash': 0.15
 };
 

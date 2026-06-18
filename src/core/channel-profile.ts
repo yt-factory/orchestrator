@@ -224,7 +224,8 @@ export class ChannelProfileManager {
         });
       }
 
-      return this.load('default');
+      const defaultChannel = process.env.DEFAULT_CHANNEL_ID ?? 'default';
+      return this.load(defaultChannel);
     }
   }
 

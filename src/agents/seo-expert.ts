@@ -23,32 +23,31 @@ Output as JSON:
 }`;
 
 const REGIONAL_PERSONAS: Record<string, string> = {
-  en: `You are a US YouTube SEO specialist. Create titles that:
-- Use power words (Ultimate, Secret, Nobody Tells You)
-- Include numbers when possible
+  en: `You are a YouTube SEO specialist. Create titles that:
+- Match the channel's voice and style (see below)
+- Are concise and intriguing, not clickbait
 - Target English-speaking audience
-- MUST naturally incorporate these established trending keywords if available: {established_trends}`,
+- Naturally incorporate these trending keywords if available: {established_trends}`,
 
-  zh: `你是一名中国YouTube/B站SEO专家。创建标题需要：
-- 使用吸引眼球的词汇（震惊、居然、必看、深度解析）
-- 适当使用数字
+  zh: `你是一名YouTube SEO专家。创建标题需要：
+- 严格遵循频道的风格和调性（见下方频道信息）
+- 简洁、有品位、不使用营销号套路（禁止使用"震惊""居然""必看""深度解析"等词汇）
 - 面向中文观众
-- 必须自然融入以下热词（如有）：{established_trends}`,
+- 可自然融入以下热词（如有）：{established_trends}`,
 
-  es: `Eres un especialista en SEO de YouTube para el mercado hispanohablante. Crea títulos que:
-- Usen palabras de impacto
-- Incluyan números cuando sea posible
+  es: `Eres un especialista en SEO de YouTube. Crea títulos que:
+- Coincidan con el estilo del canal (ver abajo)
+- Sean concisos e intrigantes, sin clickbait
 - MUST incorporate these trending keywords if available: {established_trends}`,
 
-  ja: `あなたは日本のYouTube SEOスペシャリストです。タイトル作成のルール：
-- インパクトのある言葉を使用
-- 数字を含める
-- 日本語話者向け
+  ja: `あなたはYouTube SEOスペシャリストです。タイトル作成のルール：
+- チャンネルのスタイルに合わせる（下記参照）
+- 簡潔で興味を引く、クリックベイトではない
 - 可能であればトレンドキーワードを自然に組み込む：{established_trends}`,
 
-  de: `Du bist ein YouTube-SEO-Spezialist für den deutschsprachigen Markt. Erstelle Titel die:
-- Kraftvolle Wörter verwenden
-- Zahlen einbeziehen
+  de: `Du bist ein YouTube-SEO-Spezialist. Erstelle Titel die:
+- Zum Stil des Kanals passen (siehe unten)
+- Prägnant und faszinierend sind, kein Clickbait
 - MUST incorporate these trending keywords if available: {established_trends}`
 };
 
@@ -162,16 +161,31 @@ async function generateRegionalDescription(
   geminiClient: GeminiClient,
   projectId: string,
   coreFacts: string[],
-  locale: string
+  locale: string,
+  profile: ChannelProfile
 ): Promise<string> {
+  const forbiddenWords = profile.voice.forbidden_words?.length
+    ? `\nFORBIDDEN words/phrases (never use these): ${profile.voice.forbidden_words.join(', ')}`
+    : '';
+
   const prompt = `Write a YouTube video description (max 5000 chars) for the ${locale} market based on these facts:
 ${coreFacts.join('\n')}
 
+Channel context:
+- Channel name: ${profile.channel_name}
+- Tone: ${profile.voice.tone.join(', ')}
+- Audience: ${profile.audience.demographics}${forbiddenWords}
+
 Include:
-- Hook in first 2 lines
+- Hook in first 2 lines (match the channel's ${profile.voice.tone.join('/')} tone)
 - Key points with timestamps placeholder
-- Relevant hashtags
-- Call to action
+- 3-5 relevant hashtags (short keywords only, no emojis before hashtags)
+- Brief, tasteful call to action (no excessive emojis, no aggressive marketing language)
+
+IMPORTANT formatting rules:
+- Use \\n for intentional line breaks (between paragraphs, sections)
+- Do NOT break lines in the middle of a sentence or between words
+- Each paragraph should be a continuous string, only breaking at logical points
 
 Output as JSON: { "description": string }`;
 
@@ -246,16 +260,53 @@ Output as JSON: { "chapters": string }`;
   return parsed.chapters ?? '';
 }
 
-function extractTags(coreFacts: string[], trends: TrendKeyword[]): string[] {
+async function generateTags(
+  coreFacts: string[],
+  trends: TrendKeyword[],
+  geminiClient: GeminiClient,
+  projectId: string,
+  profile: ChannelProfile
+): Promise<string[]> {
   const trendTags = trends.map((t) => t.keyword);
-  // 从 core facts 提取关键词作为补充 tags
-  const factWords = coreFacts
-    .join(' ')
-    .split(/\s+/)
-    .filter((w) => w.length > 4)
-    .slice(0, 20);
 
-  const combined = [...new Set([...trendTags, ...factWords])];
+  const forbiddenWords = profile.voice.forbidden_words?.length
+    ? `\nFORBIDDEN words (never use in tags): ${profile.voice.forbidden_words.join(', ')}`
+    : '';
+
+  const prompt = `Based on these facts, generate 10-15 short YouTube tags (keywords/phrases).
+
+Channel context:
+- Channel: ${profile.channel_name} (${profile.niche})
+- Audience: ${profile.audience.demographics}
+- Tone: ${profile.voice.tone.join(', ')}${forbiddenWords}
+
+Rules:
+- Each tag MUST be 1-4 words maximum (e.g. "程序员焦虑", "Digital Detox", "冥想", "Burnout Recovery")
+- NO full sentences — if a tag is longer than 4 words, it is WRONG
+- Tags must be directly relevant to the content facts below — do not invent unrelated topics
+- Include both Chinese and English tags if content is bilingual
+- Tags should be searchable terms that viewers would actually type
+- Do NOT repeat the trending keywords already provided
+- Match the channel's niche: ${profile.niche}
+
+Facts:
+${coreFacts.join('\n')}
+
+Output as JSON: { "tags": string[] }`;
+
+  const result = await geminiClient.generate(prompt, {
+    projectId,
+    priority: 'low'
+  });
+
+  const parsed = safeJsonParse<{ tags: string[] }>(result.text, {
+    projectId,
+    operation: 'generateTags'
+  });
+  const generatedTags = parsed.tags ?? [];
+
+  // Combine trend keywords + generated tags, dedup, cap at 30
+  const combined = [...new Set([...trendTags, ...generatedTags])];
   return combined.slice(0, 30);
 }
 
@@ -328,8 +379,11 @@ export async function generateMultiLangSEO(
   for (const [locale, persona] of Object.entries(REGIONAL_PERSONAS)) {
     // Inject channel profile voice/audience context alongside existing persona
     const profileContext = [
+      `Channel name: ${profile.channel_name}`,
       `Channel tone: ${profile.voice.tone.join(', ')}`,
+      `Title style: ${profile.quality?.title_style ?? 'concise'}`,
       `Target demographics: ${profile.audience.demographics}`,
+      `Title format guidance: Titles should feel like they belong to this channel. Use the channel name as prefix if it has a series format (e.g. "ChannelName 01：Topic").`,
     ].join('\n');
 
     const personalizedPersona = [
@@ -385,7 +439,8 @@ export async function generateMultiLangSEO(
       geminiClient,
       projectId,
       core_facts,
-      locale
+      locale,
+      profile
     );
 
     regionalResults.push({
@@ -413,7 +468,7 @@ export async function generateMultiLangSEO(
 
   return {
     primary_language: detectLanguage(rawContent),
-    tags: extractTags(core_facts, allTrends),
+    tags: await generateTags(core_facts, allTrends, geminiClient, projectId, profile),
     chapters,
     regional_seo: regionalResults,
     faq_structured_data: faq,

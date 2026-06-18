@@ -17,8 +17,10 @@ import { ChannelProfileManager } from './core/channel-profile';
 import { buildScriptPrompt } from './prompts/script-prompt-builder';
 import { generateWithSelfScoring, stripQualityMeta } from './prompts/self-scoring';
 
+const onceMode = process.argv.includes('--once');
+
 async function main() {
-  logger.info('YT-Factory Orchestrator starting...');
+  logger.info('YT-Factory Orchestrator starting...', { onceMode });
 
   // ============================================
   // Step 1: 初始化组件
@@ -26,6 +28,10 @@ async function main() {
   const geminiClient = new GeminiClient();
   const trendsHook = new TrendsHook();
   const workflowManager = new WorkflowManager();
+
+  // Track in-flight projects for --once mode
+  const pendingProjects = new Set<string>();
+  let allFilesDetected = false;
 
   // ============================================
   // Step 2: CRITICAL - Warm-up 必须在 Watcher 之前
@@ -41,13 +47,15 @@ async function main() {
   // ============================================
   // Step 3: 启动 Heartbeat
   // ============================================
-  // Set recovery callback to reprocess stale projects
-  workflowManager.setRecoveryCallback(async (projectId) => {
-    logger.info('Reprocessing recovered stale project', { projectId });
-    await processProject(projectId, workflowManager, geminiClient, trendsHook);
-  });
-  workflowManager.startHeartbeat();
-  logger.info('Heartbeat started');
+  // Set recovery callback to reprocess stale projects (skip in --once mode)
+  if (!onceMode) {
+    workflowManager.setRecoveryCallback(async (projectId) => {
+      logger.info('Reprocessing recovered stale project', { projectId });
+      await processProject(projectId, workflowManager, geminiClient, trendsHook);
+    });
+    workflowManager.startHeartbeat();
+    logger.info('Heartbeat started');
+  }
 
   // ============================================
   // Step 4: 最后启动 Watcher
@@ -85,8 +93,20 @@ async function main() {
           language: metadata.detectedLanguage
         });
 
+        // Track for --once mode
+        pendingProjects.add(projectId);
+
         // 触发处理流程
         await processProject(projectId, workflowManager, geminiClient, trendsHook);
+
+        // Auto-exit in --once mode when all projects done
+        pendingProjects.delete(projectId);
+        if (onceMode && allFilesDetected && pendingProjects.size === 0) {
+          logger.info('All files processed, exiting (--once mode)');
+          await watcher.stop();
+          await geminiClient.drain();
+          process.exit(0);
+        }
       },
       onError: (error, filePath) => {
         logger.error('Watcher error', {
@@ -99,6 +119,20 @@ async function main() {
 
   await watcher.start();
   logger.info('Watching ./incoming for files');
+
+  // In --once mode, mark initial scan complete after a short delay
+  // (chokidar fires all 'add' events synchronously during start)
+  if (onceMode) {
+    setTimeout(async () => {
+      allFilesDetected = true;
+      if (pendingProjects.size === 0) {
+        logger.info('No files found in incoming, exiting (--once mode)');
+        await watcher.stop();
+        await geminiClient.drain();
+        process.exit(0);
+      }
+    }, 3000);
+  }
 
   // ============================================
   // Step 5: 打印状态
