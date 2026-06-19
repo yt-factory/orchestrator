@@ -194,6 +194,7 @@ async function processProject(
 ): Promise<void> {
   // Shared cost tracker, so this snapshot spans provider + NotebookLM calls.
   const startTokens = provider.getTokenSnapshot();
+  const startLlm = provider.getRunStats();
 
   // Load manifest first to get traceId for progress tracker
   const manifest = await workflowManager.loadManifest(projectId);
@@ -419,6 +420,22 @@ async function processProject(
       shortsCount: shortsData.hooks.length,
       isDegraded: manifest.meta.is_degraded
     });
+
+    // One-line LLM run summary (prefix-cache visibility — key for DeepSeek).
+    // Reflects provider (non-NotebookLM) calls only; NotebookLM has no prefix cache.
+    const endLlm = provider.getRunStats();
+    const runCalls = endLlm.calls - startLlm.calls;
+    const runInput = endLlm.inputTokens - startLlm.inputTokens;
+    const runCacheHit = endLlm.cacheHitTokens - startLlm.cacheHitTokens;
+    const runOutput = endLlm.outputTokens - startLlm.outputTokens;
+    const runCost = endLlm.costUsd - startLlm.costUsd;
+    const cachePct = runInput > 0 ? Math.round((runCacheHit / runInput) * 100) : 0;
+    logger.info(
+      `LLM: ${runCalls} calls | provider=${provider.name} | ` +
+      `input=${runInput.toLocaleString()} (cache_hit=${runCacheHit.toLocaleString()}, ${cachePct}%) | ` +
+      `output=${runOutput.toLocaleString()} | est=$${runCost.toFixed(4)}`,
+      { projectId, provider: provider.name, calls: runCalls, inputTokens: runInput, cacheHitTokens: runCacheHit, outputTokens: runOutput, costUsd: runCost, cacheHitPct: cachePct },
+    );
 
     // Print Next Steps instructions for NotebookLM audio generation
     printNextSteps(projectId, projectDir, notebookLMScripts);

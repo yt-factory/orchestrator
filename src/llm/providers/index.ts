@@ -6,6 +6,7 @@
 
 import { BaseLLMProvider } from '../base/provider';
 import { GeminiProvider } from './gemini';
+import { DeepSeekProvider } from './deepseek';
 import type { CostTracker } from '../base/cost-tracker';
 
 export interface GetProviderOptions {
@@ -20,12 +21,10 @@ export function getProvider(name?: string, opts: GetProviderOptions = {}): BaseL
     case 'gemini':
       return new GeminiProvider(opts);
     case 'deepseek':
-      throw new Error(
-        "LLM_PROVIDER='deepseek' is not available yet (added in a later commit). " +
-        "Use LLM_PROVIDER=gemini for now.",
-      );
+      // Throws clearly if DEEPSEEK_API_KEY is missing (see DeepSeekProvider ctor).
+      return new DeepSeekProvider(opts);
     default:
-      throw new Error(`Unknown LLM_PROVIDER '${resolved}'. Supported: gemini.`);
+      throw new Error(`Unknown LLM_PROVIDER '${resolved}'. Supported: gemini, deepseek.`);
   }
 }
 

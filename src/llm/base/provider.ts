@@ -34,6 +34,15 @@ export abstract class BaseLLMProvider {
   protected readonly costTracker: CostTracker;
   protected readonly priorityQueue: PriorityQueue;
 
+  // Cumulative per-process stats for the run summary (cache-hit visibility).
+  private readonly runStats = {
+    calls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheHitTokens: 0,
+    costUsd: 0,
+  };
+
   constructor(config: ProviderConfig) {
     this.name = config.name;
 
@@ -80,6 +89,11 @@ export abstract class BaseLLMProvider {
   /** Currently available rate-limit tokens (for status logging). */
   getAvailableTokens(): number {
     return this.rateLimiter.getAvailableTokens();
+  }
+
+  /** Cumulative call/token/cache/cost stats since process start (for run summary). */
+  getRunStats(): { calls: number; inputTokens: number; outputTokens: number; cacheHitTokens: number; costUsd: number } {
+    return { ...this.runStats };
   }
 
   /** Graceful shutdown hook. No connection pool with the direct SDKs. */
@@ -131,6 +145,13 @@ export abstract class BaseLLMProvider {
       // table is currently Gemini-centric and will be generalized when the
       // cost-report CLI lands (Phase 6).
       this.costTracker.record(result.model, result.inputTokens + result.outputTokens);
+
+      // Accumulate for the per-run summary (see getRunStats()).
+      this.runStats.calls += 1;
+      this.runStats.inputTokens += result.inputTokens;
+      this.runStats.outputTokens += result.outputTokens;
+      this.runStats.cacheHitTokens += result.cacheHitTokens;
+      this.runStats.costUsd += result.costUsd;
 
       logger.info('LLM completion', {
         projectId: opts.projectId,
