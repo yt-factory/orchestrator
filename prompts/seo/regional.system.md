@@ -1,5 +1,5 @@
 ---
-version: 1
-description: Per-locale persona for regional YouTube title generation (personas inlined in commit 8)
+version: 2
+description: Shared cross-locale system prompt for regional SEO titles (static -> DeepSeek prefix cache)
 ---
-{{ persona }}
+{% include "_shared/regional-system.md" %}

@@ -1,7 +1,15 @@
+Locale: {{ locale }}
+
+Channel context:
+- Channel name: {{ channel_name }}
+- Tone: {{ tone }}
+- Title style: {{ title_style }}
+- Target demographics: {{ demographics }}
+
 You MUST include at least ONE of these trending keywords in your titles: {{ missing_trends }}
 
 Based on these facts:
 {{ facts }}
 
-Generate 5 high-CTR titles that naturally incorporate the trending keywords.
+Generate exactly 5 high-CTR titles for the {{ locale }} locale that naturally incorporate the trending keywords.
 Output as JSON: { "titles": string[] }

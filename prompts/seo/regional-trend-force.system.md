@@ -1,5 +1,5 @@
 ---
-version: 1
-description: Regional title regeneration forcing trending-keyword inclusion
+version: 2
+description: Regional title regeneration (shares the static regional system) forcing trending-keyword inclusion
 ---
-{{ persona }}
+{% include "_shared/regional-system.md" %}

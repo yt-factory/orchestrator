@@ -8,38 +8,12 @@ import { logger } from '../utils/logger';
 import { safeJsonParse, safeExtract } from '../utils/json-parse';
 
 // ============================================
-// Regional personas (injected into prompts/seo/regional*.system.md as {{ persona }}).
-// Commit 8 will inline these into the shared regional system prompt.
+// Target locales for regional SEO. Personas + voice rules now live in the
+// shared static system prompt (prompts/_shared/regional-system.md), so all 5
+// regional calls send an identical system message -> DeepSeek prefix-cache win.
 // ============================================
 
-const REGIONAL_PERSONAS: Record<string, string> = {
-  en: `You are a YouTube SEO specialist. Create titles that:
-- Match the channel's voice and style (see below)
-- Are concise and intriguing, not clickbait
-- Target English-speaking audience
-- Naturally incorporate these trending keywords if available: {established_trends}`,
-
-  zh: `你是一名YouTube SEO专家。创建标题需要：
-- 严格遵循频道的风格和调性（见下方频道信息）
-- 简洁、有品位、不使用营销号套路（禁止使用"震惊""居然""必看""深度解析"等词汇）
-- 面向中文观众
-- 可自然融入以下热词（如有）：{established_trends}`,
-
-  es: `Eres un especialista en SEO de YouTube. Crea títulos que:
-- Coincidan con el estilo del canal (ver abajo)
-- Sean concisos e intrigantes, sin clickbait
-- MUST incorporate these trending keywords if available: {established_trends}`,
-
-  ja: `あなたはYouTube SEOスペシャリストです。タイトル作成のルール：
-- チャンネルのスタイルに合わせる（下記参照）
-- 簡潔で興味を引く、クリックベイトではない
-- 可能であればトレンドキーワードを自然に組み込む：{established_trends}`,
-
-  de: `Du bist ein YouTube-SEO-Spezialist. Erstelle Titel die:
-- Zum Stil des Kanals passen (siehe unten)
-- Prägnant und faszinierend sind, kein Clickbait
-- MUST incorporate these trending keywords if available: {established_trends}`
-};
+const LOCALES = ['en', 'zh', 'es', 'ja', 'de'] as const;
 
 // ============================================
 // 热词覆盖验证
@@ -97,12 +71,17 @@ async function generateRegionalTitles(
   projectId: string,
   coreFacts: string[],
   locale: string,
-  persona: string
+  profile: ChannelProfile,
+  trends: string
 ): Promise<string[]> {
   const { system, user, version } = loadPrompt('seo/regional', {
-    persona,
-    facts: coreFacts.join('\n'),
     locale,
+    channel_name: profile.channel_name,
+    tone: profile.voice.tone.join(', '),
+    title_style: profile.quality?.title_style ?? 'concise',
+    demographics: profile.audience.demographics,
+    trends,
+    facts: coreFacts.join('\n'),
   });
 
   // tier: smart — regional title copywriting.
@@ -125,11 +104,15 @@ async function forceRegenerateTitlesWithTrends(
   projectId: string,
   coreFacts: string[],
   locale: string,
-  persona: string,
+  profile: ChannelProfile,
   missingTrends: string[]
 ): Promise<string[]> {
   const { system, user, version } = loadPrompt('seo/regional-trend-force', {
-    persona,
+    locale,
+    channel_name: profile.channel_name,
+    tone: profile.voice.tone.join(', '),
+    title_style: profile.quality?.title_style ?? 'concise',
+    demographics: profile.audience.demographics,
     facts: coreFacts.join('\n'),
     missing_trends: missingTrends.join(', '),
   });
@@ -353,31 +336,16 @@ export async function generateMultiLangSEO(
   }> = [];
 
   const primaryLanguage = profile.primary_language ?? 'en';
+  const trendsForUser = establishedTrends.join(', ') || 'none available';
 
-  for (const [locale, persona] of Object.entries(REGIONAL_PERSONAS)) {
-    // Inject channel profile voice/audience context alongside existing persona
-    const profileContext = [
-      `Channel name: ${profile.channel_name}`,
-      `Channel tone: ${profile.voice.tone.join(', ')}`,
-      `Title style: ${profile.quality?.title_style ?? 'concise'}`,
-      `Target demographics: ${profile.audience.demographics}`,
-      `Title format guidance: Titles should feel like they belong to this channel. Use the channel name as prefix if it has a series format (e.g. "ChannelName 01：Topic").`,
-    ].join('\n');
-
-    const personalizedPersona = [
-      persona.replace(
-        '{established_trends}',
-        establishedTrends.join(', ') || 'none available'
-      ),
-      profileContext,
-    ].join('\n');
-
+  for (const locale of LOCALES) {
     let titles = await generateRegionalTitles(
       provider,
       projectId,
       core_facts,
       locale,
-      personalizedPersona
+      profile,
+      trendsForUser
     );
 
     // 验证热词覆盖
@@ -395,7 +363,7 @@ export async function generateMultiLangSEO(
         projectId,
         core_facts,
         locale,
-        personalizedPersona,
+        profile,
         validation.missingTrends
       );
     }
