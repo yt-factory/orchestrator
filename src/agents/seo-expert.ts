@@ -3,24 +3,14 @@ import type { BaseLLMProvider } from '../llm/providers';
 import type { TrendsHook } from './trends-hook';
 import type { ChannelProfile } from '../core/channel-profile';
 import { rankTitles } from '../prompts/title-ranker';
+import { loadPrompt } from '../llm/prompts/loader';
 import { logger } from '../utils/logger';
 import { safeJsonParse, safeExtract } from '../utils/json-parse';
 
 // ============================================
-// 双角色 Prompt
+// Regional personas (injected into prompts/seo/regional*.system.md as {{ persona }}).
+// Commit 8 will inline these into the shared regional system prompt.
 // ============================================
-
-const CONTENT_ANALYST_PROMPT = `You are a senior content analyst. Extract the following from the given content:
-
-1. core_facts: Array of 5-10 key factual statements
-2. key_entities: Array of entities (each with name, type, description)
-   - type must be one of: tool, concept, person, company, technology
-
-Output as JSON:
-{
-  "core_facts": string[],
-  "key_entities": [{ "name": string, "type": string, "description": string }]
-}`;
 
 const REGIONAL_PERSONAS: Record<string, string> = {
   en: `You are a YouTube SEO specialist. Create titles that:
@@ -83,16 +73,16 @@ async function extractPrimaryTopic(
   provider: BaseLLMProvider,
   projectId: string
 ): Promise<string> {
-  const prompt = `Extract the primary topic of this content in 2-5 words. Output as JSON: { "topic": string }
-
-Content (first 500 chars):
-${rawContent.slice(0, 500)}`;
+  const { system, user, version } = loadPrompt('seo/topic', {
+    content: rawContent.slice(0, 500),
+  });
 
   // tier: fast — short structured topic extraction.
-  const result = await provider.complete('', prompt, {
+  const result = await provider.complete(system, user, {
     tier: 'fast',
     projectId,
-    priority: 'high'
+    priority: 'high',
+    templateVersion: version,
   });
 
   const parsed = safeJsonParse<{ topic: string }>(result.text, {
@@ -109,19 +99,18 @@ async function generateRegionalTitles(
   locale: string,
   persona: string
 ): Promise<string[]> {
-  const prompt = `${persona}
-
-Based on these facts:
-${coreFacts.join('\n')}
-
-Generate exactly 5 high-CTR YouTube titles for the ${locale} market.
-Output as JSON: { "titles": string[] }`;
+  const { system, user, version } = loadPrompt('seo/regional', {
+    persona,
+    facts: coreFacts.join('\n'),
+    locale,
+  });
 
   // tier: smart — regional title copywriting.
-  const result = await provider.complete('', prompt, {
+  const result = await provider.complete(system, user, {
     tier: 'smart',
     projectId,
-    priority: 'medium'
+    priority: 'medium',
+    templateVersion: version,
   });
 
   const parsed = safeJsonParse<{ titles: string[] }>(result.text, {
@@ -139,21 +128,18 @@ async function forceRegenerateTitlesWithTrends(
   persona: string,
   missingTrends: string[]
 ): Promise<string[]> {
-  const forcePrompt = `${persona}
-
-You MUST include at least ONE of these trending keywords in your titles: ${missingTrends.join(', ')}
-
-Based on these facts:
-${coreFacts.join('\n')}
-
-Generate 5 high-CTR titles that naturally incorporate the trending keywords.
-Output as JSON: { "titles": string[] }`;
+  const { system, user, version } = loadPrompt('seo/regional-trend-force', {
+    persona,
+    facts: coreFacts.join('\n'),
+    missing_trends: missingTrends.join(', '),
+  });
 
   // tier: smart — title copywriting (trend-forced regeneration).
-  const result = await provider.complete('', forcePrompt, {
+  const result = await provider.complete(system, user, {
     tier: 'smart',
     projectId,
-    priority: 'medium'
+    priority: 'medium',
+    templateVersion: version,
   });
 
   const parsed = safeJsonParse<{ titles: string[] }>(result.text, {
@@ -174,32 +160,22 @@ async function generateRegionalDescription(
     ? `\nFORBIDDEN words/phrases (never use these): ${profile.voice.forbidden_words.join(', ')}`
     : '';
 
-  const prompt = `Write a YouTube video description (max 5000 chars) for the ${locale} market based on these facts:
-${coreFacts.join('\n')}
-
-Channel context:
-- Channel name: ${profile.channel_name}
-- Tone: ${profile.voice.tone.join(', ')}
-- Audience: ${profile.audience.demographics}${forbiddenWords}
-
-Include:
-- Hook in first 2 lines (match the channel's ${profile.voice.tone.join('/')} tone)
-- Key points with timestamps placeholder
-- 3-5 relevant hashtags (short keywords only, no emojis before hashtags)
-- Brief, tasteful call to action (no excessive emojis, no aggressive marketing language)
-
-IMPORTANT formatting rules:
-- Use \\n for intentional line breaks (between paragraphs, sections)
-- Do NOT break lines in the middle of a sentence or between words
-- Each paragraph should be a continuous string, only breaking at logical points
-
-Output as JSON: { "description": string }`;
+  const { system, user, version } = loadPrompt('seo/description', {
+    locale,
+    facts: coreFacts.join('\n'),
+    channel_name: profile.channel_name,
+    tone: profile.voice.tone.join(', '),
+    demographics: profile.audience.demographics,
+    forbidden_words: forbiddenWords,
+    tone_slash: profile.voice.tone.join('/'),
+  });
 
   // tier: smart — regional description copywriting.
-  const result = await provider.complete('', prompt, {
+  const result = await provider.complete(system, user, {
     tier: 'smart',
     projectId,
-    priority: 'medium'
+    priority: 'medium',
+    templateVersion: version,
   });
 
   const parsed = safeJsonParse<{ description: string }>(result.text, {
@@ -220,21 +196,16 @@ async function generateFAQ(
   projectId: string,
   coreFacts: string[]
 ): Promise<Array<{ question: string; answer: string; related_entities: string[] }>> {
-  const prompt = `Based on these facts, generate up to 5 FAQ items for YouTube structured data:
-${coreFacts.join('\n')}
-
-Each FAQ must have:
-- question: A natural question viewers would ask
-- answer: Concise answer (max 200 chars)
-- related_entities: Up to 3 entity names mentioned
-
-Output as JSON: { "faq": [{ "question": string, "answer": string, "related_entities": string[] }] }`;
+  const { system, user, version } = loadPrompt('seo/faq', {
+    facts: coreFacts.join('\n'),
+  });
 
   // tier: fast — templated FAQ generation.
-  const result = await provider.complete('', prompt, {
+  const result = await provider.complete(system, user, {
     tier: 'fast',
     projectId,
-    priority: 'medium'
+    priority: 'medium',
+    templateVersion: version,
   });
 
   const parsed = safeJsonParse<{ faq: Array<{ question: string; answer: string; related_entities: string[] }> }>(
@@ -250,19 +221,20 @@ async function generateSmartChapters(
   rawContent: string,
   establishedTrends: string[]
 ): Promise<string> {
-  const prompt = `Generate YouTube chapter markers for this content. Each chapter should be on a new line in format "MM:SS Chapter Title".
-${establishedTrends.length > 0 ? `Try to include these trending terms in chapter titles: ${establishedTrends.join(', ')}` : ''}
-
-Content (first 2000 chars):
-${rawContent.slice(0, 2000)}
-
-Output as JSON: { "chapters": string }`;
+  const trendLine = establishedTrends.length > 0
+    ? `Try to include these trending terms in chapter titles: ${establishedTrends.join(', ')}`
+    : '';
+  const { system, user, version } = loadPrompt('seo/chapters', {
+    trend_line: trendLine,
+    content: rawContent.slice(0, 2000),
+  });
 
   // tier: fast — chapter-marker extraction (replaced by pure regex in Phase 5).
-  const result = await provider.complete('', prompt, {
+  const result = await provider.complete(system, user, {
     tier: 'fast',
     projectId,
-    priority: 'medium'
+    priority: 'medium',
+    templateVersion: version,
   });
 
   const parsed = safeJsonParse<{ chapters: string }>(result.text, {
@@ -285,32 +257,21 @@ async function generateTags(
     ? `\nFORBIDDEN words (never use in tags): ${profile.voice.forbidden_words.join(', ')}`
     : '';
 
-  const prompt = `Based on these facts, generate 10-15 short YouTube tags (keywords/phrases).
-
-Channel context:
-- Channel: ${profile.channel_name} (${profile.niche})
-- Audience: ${profile.audience.demographics}
-- Tone: ${profile.voice.tone.join(', ')}${forbiddenWords}
-
-Rules:
-- Each tag MUST be 1-4 words maximum (e.g. "程序员焦虑", "Digital Detox", "冥想", "Burnout Recovery")
-- NO full sentences — if a tag is longer than 4 words, it is WRONG
-- Tags must be directly relevant to the content facts below — do not invent unrelated topics
-- Include both Chinese and English tags if content is bilingual
-- Tags should be searchable terms that viewers would actually type
-- Do NOT repeat the trending keywords already provided
-- Match the channel's niche: ${profile.niche}
-
-Facts:
-${coreFacts.join('\n')}
-
-Output as JSON: { "tags": string[] }`;
+  const { system, user, version } = loadPrompt('seo/tags', {
+    channel_name: profile.channel_name,
+    niche: profile.niche,
+    demographics: profile.audience.demographics,
+    tone: profile.voice.tone.join(', '),
+    forbidden_words: forbiddenWords,
+    facts: coreFacts.join('\n'),
+  });
 
   // tier: fast — supplementary tag suggestions.
-  const result = await provider.complete('', prompt, {
+  const result = await provider.complete(system, user, {
     tier: 'fast',
     projectId,
-    priority: 'low'
+    priority: 'low',
+    templateVersion: version,
   });
 
   const parsed = safeJsonParse<{ tags: string[] }>(result.text, {
@@ -365,10 +326,11 @@ export async function generateMultiLangSEO(
 
   // Step 1: 提取核心事实
   // tier: fast — structured fact/entity extraction.
+  const analyst = loadPrompt('seo/content-analyst', { content: rawContent });
   const analysisResult = await provider.complete(
-    '',
-    CONTENT_ANALYST_PROMPT + '\n\nContent:\n' + rawContent,
-    { tier: 'fast', projectId, priority: 'high' }
+    analyst.system,
+    analyst.user,
+    { tier: 'fast', projectId, priority: 'high', templateVersion: analyst.version },
   );
   const analysisData = safeJsonParse<{
     core_facts: string[];

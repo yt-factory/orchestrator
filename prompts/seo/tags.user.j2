@@ -1,0 +1,20 @@
+Based on these facts, generate 10-15 short YouTube tags (keywords/phrases).
+
+Channel context:
+- Channel: {{ channel_name }} ({{ niche }})
+- Audience: {{ demographics }}
+- Tone: {{ tone }}{{ forbidden_words }}
+
+Rules:
+- Each tag MUST be 1-4 words maximum (e.g. "程序员焦虑", "Digital Detox", "冥想", "Burnout Recovery")
+- NO full sentences — if a tag is longer than 4 words, it is WRONG
+- Tags must be directly relevant to the content facts below — do not invent unrelated topics
+- Include both Chinese and English tags if content is bilingual
+- Tags should be searchable terms that viewers would actually type
+- Do NOT repeat the trending keywords already provided
+- Match the channel's niche: {{ niche }}
+
+Facts:
+{{ facts }}
+
+Output as JSON: { "tags": string[] }

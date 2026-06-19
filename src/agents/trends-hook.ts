@@ -2,6 +2,7 @@ import type { TrendKeyword } from '../core/manifest';
 import { readFile, writeFile } from 'fs/promises';
 import { logger } from '../utils/logger';
 import type { BaseLLMProvider } from '../llm/providers';
+import { loadPrompt } from '../llm/prompts/loader';
 
 const CACHE_TTL_HOURS = 6;
 const DECAY_THRESHOLD_HOURS = 24;
@@ -182,16 +183,15 @@ export class TrendsHook {
     provider: BaseLLMProvider,
     projectId: string
   ): Promise<string[]> {
-    const prompt = `Given the topic "${topic}", list 5-10 currently trending keywords or phrases related to this topic that would perform well on YouTube. Focus on search volume and recency.
-
-Output as JSON: { "keywords": string[] }`;
+    const { system, user, version } = loadPrompt('trends/hook', { topic });
 
     try {
       // tier: fast — trending-keyword extraction.
-      const result = await provider.complete('', prompt, {
+      const result = await provider.complete(system, user, {
         tier: 'fast',
         projectId,
-        priority: 'medium'
+        priority: 'medium',
+        templateVersion: version,
       });
 
       const parsed = JSON.parse(result.text);
