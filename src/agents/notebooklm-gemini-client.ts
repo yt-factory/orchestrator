@@ -17,10 +17,11 @@ function cleanJsonResponse(rawText: string): string {
     .trim();
 }
 
-// Fallback model chain (Gemini 3 series - January 2026)
-// Model names are configurable via environment variables (preview naming convention)
+// Fallback model chain for the NotebookLM path. gemini-3-pro-preview was the
+// cost hole and is removed; the primary slot is now gemini-2.5-pro.
+// Model names remain env-configurable.
 const MODEL_FALLBACK_CHAIN = [
-  process.env.GEMINI_PRO_MODEL || 'gemini-3-pro-preview',
+  process.env.GEMINI_PRO_MODEL || 'gemini-2.5-pro',
   process.env.GEMINI_FLASH_MODEL || 'gemini-3-flash-preview',
   process.env.GEMINI_FLASH_LITE_MODEL || 'gemini-2.5-flash'
 ] as const;
@@ -402,7 +403,7 @@ export class NotebookLMGeminiClient {
 
     return {
       text: mockResponse,
-      modelUsed: MODEL_FALLBACK_CHAIN[0] ?? 'gemini-3-pro-preview',
+      modelUsed: MODEL_FALLBACK_CHAIN[0] ?? 'gemini-2.5-pro',
       isFallbackMode: false,
       tokensUsed: Math.ceil(prompt.length / 4 + mockResponse.length / 4)
     };
