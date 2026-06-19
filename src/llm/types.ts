@@ -35,6 +35,15 @@ export interface CompleteOptions {
   priority?: Priority;
   /** Per-call retry budget for the provider's internal call (provider-defined). */
   maxRetries?: number;
+  /**
+   * Prompt template version for cache invalidation. 0 (default) means "not yet
+   * externalized" — the cache uses a hash of the prompt text itself as the
+   * version (any edit invalidates). Phase 4 sets this to >=1 per externalized
+   * prompt so an explicit version bump drives invalidation.
+   */
+  templateVersion?: number;
+  /** Bypass the content-hash cache for this call (force a fresh API call). */
+  noCache?: boolean;
 }
 
 export interface TokenUsage {

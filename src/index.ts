@@ -21,6 +21,12 @@ import { CostTracker } from './llm/base/cost-tracker';
 
 const onceMode = process.argv.includes('--once');
 
+// `make process FORCE=1` passes --no-cache; surface it to the provider via env
+// so it doesn't need threading through every call site.
+if (process.argv.includes('--no-cache')) {
+  process.env.LLM_NO_CACHE = 'true';
+}
+
 async function main() {
   logger.info('YT-Factory Orchestrator starting...', { onceMode });
 
@@ -425,16 +431,20 @@ async function processProject(
     // Reflects provider (non-NotebookLM) calls only; NotebookLM has no prefix cache.
     const endLlm = provider.getRunStats();
     const runCalls = endLlm.calls - startLlm.calls;
-    const runInput = endLlm.inputTokens - startLlm.inputTokens;
+    const runLocalHits = endLlm.localCacheHits - startLlm.localCacheHits;
+    const runInput = endLlm.inputTokens - startLlm.inputTokens; // real (non-cached) calls only
     const runCacheHit = endLlm.cacheHitTokens - startLlm.cacheHitTokens;
     const runOutput = endLlm.outputTokens - startLlm.outputTokens;
     const runCost = endLlm.costUsd - startLlm.costUsd;
-    const cachePct = runInput > 0 ? Math.round((runCacheHit / runInput) * 100) : 0;
+    const realCalls = runCalls - runLocalHits;
+    // prefix_cache = DeepSeek prompt_cache_hit ratio over real API calls; n/a if none.
+    const prefixCache = realCalls > 0 && runInput > 0
+      ? `${Math.round((runCacheHit / runInput) * 100)}%`
+      : 'n/a';
     logger.info(
       `LLM: ${runCalls} calls | provider=${provider.name} | ` +
-      `input=${runInput.toLocaleString()} (cache_hit=${runCacheHit.toLocaleString()}, ${cachePct}%) | ` +
-      `output=${runOutput.toLocaleString()} | est=$${runCost.toFixed(4)}`,
-      { projectId, provider: provider.name, calls: runCalls, inputTokens: runInput, cacheHitTokens: runCacheHit, outputTokens: runOutput, costUsd: runCost, cacheHitPct: cachePct },
+      `local_cache_hit=${runLocalHits}/${runCalls} | prefix_cache=${prefixCache} | $${runCost.toFixed(4)}`,
+      { projectId, provider: provider.name, calls: runCalls, localCacheHits: runLocalHits, realCalls, inputTokens: runInput, cacheHitTokens: runCacheHit, outputTokens: runOutput, costUsd: runCost, prefixCache },
     );
 
     // Print Next Steps instructions for NotebookLM audio generation

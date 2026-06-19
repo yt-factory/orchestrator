@@ -18,6 +18,8 @@ import { CircuitBreaker, CircuitOpenError } from './circuit-breaker';
 import { CostTracker } from './cost-tracker';
 import { PriorityQueue, type Priority } from './priority-queue';
 import { logger } from '../../utils/logger';
+import { computeCacheKey } from '../cache/key';
+import { CacheStore, type CacheEntry } from '../cache/store';
 import type { CostTracking } from '../../core/manifest';
 import type {
   CompleteOptions,
@@ -33,10 +35,14 @@ export abstract class BaseLLMProvider {
   protected readonly circuitBreaker: CircuitBreaker;
   protected readonly costTracker: CostTracker;
   protected readonly priorityQueue: PriorityQueue;
+  protected readonly cacheStore: CacheStore;
 
   // Cumulative per-process stats for the run summary (cache-hit visibility).
+  // input/output/cacheHit/cost accumulate REAL (non-local-cache) calls only,
+  // so prefix-cache % reflects actual API traffic; localCacheHits counts hits.
   private readonly runStats = {
     calls: 0,
+    localCacheHits: 0,
     inputTokens: 0,
     outputTokens: 0,
     cacheHitTokens: 0,
@@ -67,6 +73,8 @@ export abstract class BaseLLMProvider {
 
     // Use the injected shared tracker if provided, else a fresh per-instance one.
     this.costTracker = config.costTracker ?? new CostTracker();
+
+    this.cacheStore = new CacheStore();
   }
 
   /** Initialize provider state (cost tracker disk load, model warm-up, etc.). */
@@ -92,7 +100,7 @@ export abstract class BaseLLMProvider {
   }
 
   /** Cumulative call/token/cache/cost stats since process start (for run summary). */
-  getRunStats(): { calls: number; inputTokens: number; outputTokens: number; cacheHitTokens: number; costUsd: number } {
+  getRunStats(): { calls: number; localCacheHits: number; inputTokens: number; outputTokens: number; cacheHitTokens: number; costUsd: number } {
     return { ...this.runStats };
   }
 
@@ -111,6 +119,39 @@ export abstract class BaseLLMProvider {
     opts: CompleteOptions,
   ): Promise<CompletionResult> {
     const priority: Priority = opts.priority ?? 'medium';
+    const templateVersion = opts.templateVersion ?? 0;
+
+    // 0. content-hash cache (short-circuits before queue/rate-limit/breaker).
+    const cacheEnabled =
+      process.env.LLM_CACHE_ENABLED !== 'false' &&
+      process.env.LLM_NO_CACHE !== 'true' &&
+      !opts.noCache;
+    let cacheKey: string | null = null;
+    if (cacheEnabled) {
+      cacheKey = computeCacheKey({
+        provider: this.name,
+        tier: opts.tier,
+        jsonMode: !!opts.jsonMode,
+        templateVersion,
+        systemPrompt,
+        userContent,
+        mockMode: process.env.MOCK_MODE === 'true',
+      });
+      const cached = await this.cacheStore.load(cacheKey);
+      if (cached) {
+        const hit: CompletionResult = { ...cached.result, fromLocalCache: true, costUsd: 0 };
+        this.runStats.calls += 1;
+        this.runStats.localCacheHits += 1;
+        logger.info('LLM completion (local cache hit)', {
+          projectId: opts.projectId,
+          provider: this.name,
+          model: hit.model,
+          tier: opts.tier,
+          fromLocalCache: true,
+        });
+        return hit;
+      }
+    }
 
     // 1. fast-fail if breaker is open
     if (!this.circuitBreaker.canExecute()) {
@@ -146,12 +187,25 @@ export abstract class BaseLLMProvider {
       // cost-report CLI lands (Phase 6).
       this.costTracker.record(result.model, result.inputTokens + result.outputTokens);
 
-      // Accumulate for the per-run summary (see getRunStats()).
+      // Accumulate for the per-run summary (real calls only — see getRunStats()).
       this.runStats.calls += 1;
       this.runStats.inputTokens += result.inputTokens;
       this.runStats.outputTokens += result.outputTokens;
       this.runStats.cacheHitTokens += result.cacheHitTokens;
       this.runStats.costUsd += result.costUsd;
+
+      // Persist to the content-hash cache (best-effort; never fail the call).
+      if (cacheEnabled && cacheKey) {
+        const entry: CacheEntry = {
+          key: cacheKey,
+          input_summary: { provider: this.name, tier: opts.tier, template_version: templateVersion },
+          result,
+          created_at: new Date().toISOString(),
+        };
+        await this.cacheStore.save(cacheKey, entry, result.costUsd).catch((error) => {
+          logger.warn('LLM cache save failed', { error: String(error) });
+        });
+      }
 
       logger.info('LLM completion', {
         projectId: opts.projectId,
