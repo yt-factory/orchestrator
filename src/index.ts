@@ -21,9 +21,14 @@ import { CostTracker } from './llm/base/cost-tracker';
 
 const onceMode = process.argv.includes('--once');
 
-// `make process FORCE=1` passes --no-cache; surface it to the provider via env
-// so it doesn't need threading through every call site.
-if (process.argv.includes('--no-cache')) {
+// Force-bypass the LLM cache via either the --no-cache flag or the
+// FORCE_NO_LLM_CACHE env (set by `bun run process:force` / `make process FORCE=1`).
+// Normalized to LLM_NO_CACHE so the provider reads a single source.
+if (
+  process.argv.includes('--no-cache') ||
+  process.env.FORCE_NO_LLM_CACHE === '1' ||
+  process.env.FORCE_NO_LLM_CACHE === 'true'
+) {
   process.env.LLM_NO_CACHE = 'true';
 }
 
