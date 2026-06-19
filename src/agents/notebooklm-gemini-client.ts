@@ -48,7 +48,12 @@ interface ModelAttemptError {
   attempts: number;
 }
 
-export class GeminiClient {
+/**
+ * Scoped Gemini client for the NotebookLM podcast-script path only.
+ * (Renamed from GeminiClient; the pipeline now uses the tier-aware provider
+ * abstraction in src/llm/ — this remains the dedicated NotebookLM generator.)
+ */
+export class NotebookLMGeminiClient {
   private genAI: GoogleGenerativeAI;
   private models: Map<ModelName, GenerativeModel> = new Map();
   private tokenBucket: TokenBucket;
@@ -442,6 +447,13 @@ IMPORTANT: Please respond in a clear, straightforward manner.
 
   async drain(): Promise<void> {
     // No connection pool to drain with direct SDK
-    logger.info('Gemini client shutdown complete');
+    logger.info('NotebookLM Gemini client shutdown complete');
   }
+}
+
+/** Factory for the NotebookLM-scoped Gemini client (optionally shares a CostTracker). */
+export function getNotebookLMGeminiClient(
+  opts: { costTracker?: CostTracker } = {},
+): NotebookLMGeminiClient {
+  return new NotebookLMGeminiClient(opts);
 }

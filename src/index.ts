@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { join } from 'path';
 import { FolderWatcher } from './core/watcher';
 import { WorkflowManager } from './core/workflow';
-import { GeminiClient } from './agents/gemini-client';
+import { getNotebookLMGeminiClient, type NotebookLMGeminiClient } from './agents/notebooklm-gemini-client';
 import { TrendsHook } from './agents/trends-hook';
 import { generateMultiLangSEO } from './agents/seo-expert';
 import { extractShortsHooks } from './agents/shorts-extractor';
@@ -32,7 +32,7 @@ async function main() {
   const sharedCostTracker = new CostTracker();
   const provider = getProvider(undefined, { costTracker: sharedCostTracker });
   // NotebookLM keeps the legacy direct-Gemini path (not tier-routed, not DeepSeek).
-  const notebooklmClient = new GeminiClient({ costTracker: sharedCostTracker });
+  const notebooklmClient = getNotebookLMGeminiClient({ costTracker: sharedCostTracker });
   const trendsHook = new TrendsHook();
   const workflowManager = new WorkflowManager();
 
@@ -190,7 +190,7 @@ async function processProject(
   workflowManager: WorkflowManager,
   provider: BaseLLMProvider,
   trendsHook: TrendsHook,
-  notebooklmClient: GeminiClient,
+  notebooklmClient: NotebookLMGeminiClient,
 ): Promise<void> {
   // Shared cost tracker, so this snapshot spans provider + NotebookLM calls.
   const startTokens = provider.getTokenSnapshot();

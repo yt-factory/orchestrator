@@ -6,7 +6,7 @@
  * condition using software engineering metaphors.
  */
 
-import { GeminiClient } from './gemini-client';
+import type { NotebookLMGeminiClient } from './notebooklm-gemini-client';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { logger } from '../utils/logger';
@@ -282,7 +282,7 @@ async function generateSingleScript(
   rawContent: string,
   projectId: string,
   language: 'en' | 'zh',
-  geminiClient: GeminiClient,
+  geminiClient: NotebookLMGeminiClient,
   profile?: ChannelProfile
 ): Promise<{ content: string; metadata: GeneratedScript['metadata'] }> {
   const promptTemplate = language === 'en' ? EN_PROMPT_TEMPLATE : ZH_PROMPT_TEMPLATE;
@@ -324,7 +324,7 @@ async function generateSingleScript(
  */
 export async function generateNotebookLMScripts(
   config: NotebookLMScriptConfig,
-  geminiClient: GeminiClient,
+  geminiClient: NotebookLMGeminiClient,
   profile?: ChannelProfile
 ): Promise<GeneratedScript[]> {
   const results: GeneratedScript[] = [];
