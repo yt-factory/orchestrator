@@ -60,3 +60,8 @@ export function loadPrompt(name: string, vars: Record<string, unknown> = {}): Lo
 
   return { system, user, version };
 }
+
+/** Render a standalone Nunjucks template (no system/user split, no LLM). */
+export function renderTemplate(templatePath: string, vars: Record<string, unknown> = {}): string {
+  return env.render(templatePath, vars).trim();
+}

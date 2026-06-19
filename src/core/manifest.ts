@@ -103,7 +103,10 @@ export const EntitySchema = z.object({
 
 export const RegionalSEOSchema = z.object({
   language: z.enum(['en', 'zh', 'es', 'ja', 'de']),
-  titles: z.array(z.string()).length(5),
+  // Forward-compatible array shape; the Phase-5+ pipeline emits exactly one
+  // templated title (hook | chineseName | csConceptEn). Extra slots remain
+  // available for multi-title experiments without schema churn.
+  titles: z.array(z.string()).min(1).max(5),
   description: z.string().max(5000),
   cultural_hooks: z.array(z.string()).max(3),
   contains_established_trend: z.boolean()
@@ -112,7 +115,7 @@ export const RegionalSEOSchema = z.object({
 export const SEODataSchema = z.object({
   primary_language: z.enum(['en', 'zh']),
   tags: z.array(z.string()).max(30),
-  chapters: z.string(),
+  chapters: z.string().default(''),
   regional_seo: z.array(RegionalSEOSchema).min(2),
   faq_structured_data: z.array(FAQItemSchema).max(5),
   entities: z.array(EntitySchema).max(10),

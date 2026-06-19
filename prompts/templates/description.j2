@@ -1,0 +1,16 @@
+本期公案：{{ chinese_name }}
+對應 CS 概念：{{ cs_concept_zh }}（{{ cs_concept_en }}）
+
+━━━━━━━━━━━━━━━
+{{ hook_paragraph }}
+━━━━━━━━━━━━━━━
+{% if chapters %}
+📍 時間軸
+{{ chapters }}
+
+━━━━━━━━━━━━━━━
+{% endif %}
+關於極客禪 · {{ channel_name }}
+{{ tagline }}
+
+{% for tag in hashtags %}#{{ tag }} {% endfor %}

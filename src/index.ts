@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { join } from 'path';
+import { join, basename } from 'path';
 import { FolderWatcher } from './core/watcher';
 import { WorkflowManager } from './core/workflow';
 import { getNotebookLMGeminiClient, type NotebookLMGeminiClient } from './agents/notebooklm-gemini-client';
@@ -16,6 +16,7 @@ import { ProgressTracker, ProcessingStage } from './core/processing-stages';
 import { ChannelProfileManager } from './core/channel-profile';
 import { buildScriptPrompt } from './prompts/script-prompt-builder';
 import { generateWithSelfScoring, stripQualityMeta } from './prompts/self-scoring';
+import { parseKoan } from './parsers/koan';
 import { getProvider, type BaseLLMProvider } from './llm/providers';
 import { CostTracker } from './llm/base/cost-tracker';
 
@@ -214,6 +215,17 @@ async function processProject(
   const wordCount = manifest.input_source.word_count;
   const language = manifest.input_source.detected_language ?? 'en';
 
+  // Parse koan metadata (Phase 5). Pre-format-v2 koans (legacy ep04-20, etc.)
+  // lack structured metadata and are skipped — not reprocessed.
+  const sourceFile = basename(manifest.input_source.local_path);
+  const parsed = parseKoan(rawContent, sourceFile);
+  if (!parsed.ok) {
+    logger.warn(`skipping pre-format-v2 koan: ${sourceFile} (${parsed.reason})`, { projectId });
+    await workflowManager.markFileAsProcessed(projectId).catch(() => {});
+    return;
+  }
+  const koan = parsed.koan;
+
   // Load channel profile for this project
   const channelProfileManager = new ChannelProfileManager();
   const channelProfile = await channelProfileManager.loadForProject(projectId);
@@ -289,7 +301,7 @@ async function processProject(
     // ============================================
     progress.startStage(ProcessingStage.TREND_ANALYSIS);
     // Note: generateMultiLangSEO internally handles both trend analysis and SEO generation
-    const seoData = await generateMultiLangSEO(rawContent, projectId, provider, trendsHook, channelProfile);
+    const seoData = await generateMultiLangSEO(rawContent, projectId, provider, trendsHook, channelProfile, koan);
     progress.completeStage(ProcessingStage.SEO_GENERATION, {
       trendCoverage: seoData.trend_coverage_score,
       faqCount: seoData.faq_structured_data.length,

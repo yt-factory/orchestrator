@@ -168,7 +168,13 @@ export class GeminiProvider extends BaseLLMProvider {
     // Order matters: branches that EMBED other content (the shorts prompt embeds
     // the generated script; the script prompt embeds raw content) must be matched
     // by their most-specific marker first, before generic tokens like "topic".
-    if (prompt.includes('Shorts') || prompt.includes('best moments')) {
+    if (prompt.includes('hook_paragraph')) {
+      text = JSON.stringify({ hook_paragraph: '在程式的世界裡，我們總在尋找平衡。慢下來，也許答案就在眼前。' });
+    } else if (prompt.includes('hook phrase')) {
+      text = JSON.stringify({ hook: '当代码遇见禅' });
+    } else if (prompt.includes('supplement an existing tag')) {
+      text = JSON.stringify({ tags: ['mock-tag-a', 'mock-tag-b', 'mock-tag-c'] });
+    } else if (prompt.includes('Shorts') || prompt.includes('best moments')) {
       text = JSON.stringify({
         hooks: [{ text: 'This will blow your mind!', timestamp_start: '00:05', timestamp_end: '00:15', hook_type: 'counter_intuitive', emotional_trigger: 'awe', controversy_score: 3, predicted_engagement: { comments: 'medium', shares: 'high', completion_rate: 'high' }, face_detection_required: false }],
         vertical_crop_focus: 'center',
