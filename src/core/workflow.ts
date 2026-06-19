@@ -130,7 +130,7 @@ export class WorkflowManager {
       assets: {},
       meta: {
         stale_recovery_count: 0,
-        model_used: 'gemini-3-pro-preview',
+        model_used: 'gemini-2.5-pro',
         is_fallback_mode: false,
         cost: {
           total_tokens_used: 0,

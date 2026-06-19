@@ -371,7 +371,7 @@ export const ProjectManifestSchema = z.object({
   meta: z.object({
     stale_recovery_count: z.number().default(0),
     processing_time_ms: z.number().optional(),
-    model_used: z.string().default('gemini-3-pro-preview'),
+    model_used: z.string().default('gemini-2.5-pro'),
     is_fallback_mode: z.boolean().default(false),
     trends_authority_score: z.number().min(0).max(100).optional(),
     cost: CostTrackingSchema.default({
@@ -402,7 +402,7 @@ export const ProjectManifestSchema = z.object({
     file_size: z.number().optional()
   }).default({
     stale_recovery_count: 0,
-    model_used: 'gemini-3-pro-preview',
+    model_used: 'gemini-2.5-pro',
     is_fallback_mode: false,
     cost: {
       total_tokens_used: 0,

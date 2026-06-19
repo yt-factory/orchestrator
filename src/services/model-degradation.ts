@@ -15,7 +15,7 @@ interface ModelConfig {
 
 // Model hierarchy for fallback chain
 const MODEL_HIERARCHY: ModelConfig[] = [
-  { name: 'gemini-3-pro-preview', priority: 1, strictness: 'normal', maxTokens: 8192 },
+  { name: 'gemini-2.5-pro', priority: 1, strictness: 'normal', maxTokens: 8192 },
   { name: 'gemini-3-flash-preview', priority: 2, strictness: 'normal', maxTokens: 4096 },
   { name: 'gemini-2.5-flash', priority: 3, strictness: 'normal', maxTokens: 4096 },
   { name: 'gemini-1.5-flash', priority: 4, strictness: 'strict', maxTokens: 2048 }
