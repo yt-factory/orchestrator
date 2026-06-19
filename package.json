@@ -9,6 +9,7 @@
     "process": "bun run src/index.ts --once",
     "process:force": "FORCE_NO_LLM_CACHE=1 bun run src/index.ts --once",
     "clean-llm-cache": "rm -rf .cache/llm",
+    "parse-koans": "bun run src/cli/parse-all-koans.ts",
     "typecheck": "tsc --noEmit",
     "feedback": "bun run src/cli/feedback.ts",
     "channel": "bun run src/cli/channel.ts"
