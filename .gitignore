@@ -27,6 +27,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .cache
 *.tsbuildinfo
 
+# compare/review artifacts (debug tool output)
+.compare
+
 # IntelliJ based IDEs
 .idea
 
