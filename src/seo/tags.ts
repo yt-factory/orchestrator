@@ -16,6 +16,11 @@ export const CORE_STATIC_TAGS = [
 
 const MAX_TAGS = 30;
 
+// Deterministic guard (belt-and-suspenders with the prompt constraint): drop any
+// tag carrying a 4-digit year — year-stamped tags age badly and the LLM
+// occasionally ignores the prompt. e.g. "Algorithm Optimization 2025".
+const YEAR_RE = /\b(?:19|20)\d{2}\b/;
+
 export function buildTags(
   koan: { csConceptZh: string; csConceptEn: string },
   llmSuggested: string[],
@@ -23,6 +28,6 @@ export function buildTags(
   const fromKoan = [koan.csConceptZh, koan.csConceptEn];
   const merged = [...CORE_STATIC_TAGS, ...fromKoan, ...llmSuggested]
     .map((t) => t.trim())
-    .filter((t) => t.length > 0);
+    .filter((t) => t.length > 0 && !YEAR_RE.test(t));
   return [...new Set(merged)].slice(0, MAX_TAGS);
 }

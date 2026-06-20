@@ -52,8 +52,9 @@ async function generateFAQ(
   provider: BaseLLMProvider,
   projectId: string,
   coreFacts: string[],
+  locale: Locale,
 ): Promise<Array<{ question: string; answer: string; related_entities: string[] }>> {
-  const { system, user, version } = loadPrompt('seo/faq', { facts: coreFacts.join('\n') });
+  const { system, user, version } = loadPrompt('seo/faq', { facts: coreFacts.join('\n'), locale });
   const result = await provider.complete(system, user, {
     tier: 'fast',
     projectId,
@@ -62,7 +63,7 @@ async function generateFAQ(
   });
   const parsed = safeJsonParse<{ faq: Array<{ question: string; answer: string; related_entities: string[] }> }>(
     result.text,
-    { projectId, operation: 'generateFAQ' },
+    { projectId, operation: `generateFAQ:${locale}` },
   );
   return parsed.faq ?? [];
 }
@@ -160,6 +161,7 @@ export async function generateMultiLangSEO(
     language: Locale;
     titles: string[];
     description: string;
+    faq: Array<{ question: string; answer: string; related_entities: string[] }>;
     contains_established_trend: boolean;
   }> = [];
 
@@ -210,15 +212,18 @@ export async function generateMultiLangSEO(
       hashtags,
     });
 
+    // Per-locale FAQ — Chinese in the locale's script (was top-level English).
+    const faq = await generateFAQ(provider, projectId, core_facts, locale);
+
     regionalResults.push({
       language: locale,
       titles: [title],
       description,
+      faq,
       contains_established_trend: validateTrendCoverage([title], establishedTrends).valid,
     });
   }
 
-  const faq = await generateFAQ(provider, projectId, core_facts);
   const trendCoverageScore = calculateTrendCoverageScore(regionalResults, establishedTrends);
 
   return {
@@ -226,7 +231,6 @@ export async function generateMultiLangSEO(
     tags,
     chapters,
     regional_seo: regionalResults,
-    faq_structured_data: faq,
     entities: key_entities,
     injected_trends: allTrends.slice(0, 5),
     trend_coverage_score: trendCoverageScore,

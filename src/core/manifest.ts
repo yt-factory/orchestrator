@@ -115,6 +115,9 @@ export const RegionalSEOSchema = z.object({
   // available for multi-title experiments without schema churn.
   titles: z.array(z.string()).min(1).max(5),
   description: z.string().max(5000),
+  // FAQ is per-locale (V4): each locale gets its own Chinese-language FAQ
+  // (was a single top-level English faq_structured_data shared across locales).
+  faq: z.array(FAQItemSchema).max(5).default([]),
   contains_established_trend: z.boolean()
 });
 
@@ -123,7 +126,6 @@ export const SEODataSchema = z.object({
   tags: z.array(z.string()).max(30),
   chapters: z.string().default(''),
   regional_seo: z.array(RegionalSEOSchema).length(2),
-  faq_structured_data: z.array(FAQItemSchema).max(5),
   entities: z.array(EntitySchema).max(10),
   injected_trends: z.array(TrendKeywordSchema).max(5).optional(),
   trend_coverage_score: z.number().min(0).max(100)

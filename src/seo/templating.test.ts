@@ -42,4 +42,15 @@ describe('buildTags', () => {
     expect(tags).not.toContain('');
     expect(tags).toContain('禅');
   });
+  test('strips year-stamped tags (P1 guard)', () => {
+    const tags = buildTags(koan, [
+      'Algorithm Optimization 2025',
+      'Space-Time 2024',
+      'in 2026',
+      'cache strategy', // keep
+    ]);
+    expect(tags).toContain('cache strategy');
+    expect(tags.some((t) => /\b(?:19|20)\d{2}\b/.test(t))).toBe(false);
+    expect(tags).not.toContain('Algorithm Optimization 2025');
+  });
 });

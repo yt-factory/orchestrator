@@ -1,9 +1,4 @@
-Based on these facts, generate up to 5 FAQ items for YouTube structured data:
+Locale: {{ locale }}
+
+Based on these facts about the koan, write the 5 FAQs in the locale's language:
 {{ facts }}
-
-Each FAQ must have:
-- question: A natural question viewers would ask
-- answer: Concise answer (max 200 chars)
-- related_entities: Up to 3 entity names mentioned
-
-Output as JSON: { "faq": [{ "question": string, "answer": string, "related_entities": string[] }] }

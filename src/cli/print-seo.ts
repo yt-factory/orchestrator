@@ -67,7 +67,7 @@ function main(): void {
       title: regional.titles[0],
       description: regional.description,
       tags: seo.tags,
-      faq: seo.faq_structured_data,
+      faq: regional.faq,
       cost,
     }, null, 2));
     return;
@@ -82,9 +82,9 @@ function main(): void {
   out.push(sep, '📝  DESCRIPTION (copy-paste to YouTube)', sep, regional.description, '');
   out.push(sep, `🏷️   TAGS (${seo.tags.length})`, sep, seo.tags.join(', '), '');
 
-  if (seo.faq_structured_data && seo.faq_structured_data.length > 0) {
-    out.push(sep, `❓  FAQ (${seo.faq_structured_data.length}) — pinned comment / description bottom`, sep);
-    seo.faq_structured_data.forEach((faq, i) => {
+  if (regional.faq && regional.faq.length > 0) {
+    out.push(sep, `❓  FAQ (${regional.faq.length}) — pinned comment / description bottom`, sep);
+    regional.faq.forEach((faq, i) => {
       out.push(`Q${i + 1}: ${faq.question}`, `A${i + 1}: ${faq.answer}`, '');
     });
   }

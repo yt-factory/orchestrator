@@ -333,7 +333,7 @@ async function processProject(
     const seoData = await generateMultiLangSEO(rawContent, projectId, provider, trendsHook, channelProfile, koan);
     progress.completeStage(ProcessingStage.SEO_GENERATION, {
       trendCoverage: seoData.trend_coverage_score,
-      faqCount: seoData.faq_structured_data.length,
+      faqCount: seoData.regional_seo.reduce((n, r) => n + r.faq.length, 0),
       regionalSeoCount: seoData.regional_seo.length
     });
 

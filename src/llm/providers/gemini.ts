@@ -174,6 +174,12 @@ export class GeminiProvider extends BaseLLMProvider {
       text = JSON.stringify({ hook: '当代码遇见禅' });
     } else if (prompt.includes('supplement an existing tag')) {
       text = JSON.stringify({ tags: ['mock-tag-a', 'mock-tag-b', 'mock-tag-c'] });
+    } else if (prompt.includes('related_entities')) {
+      // FAQ prompt (checked before titles/description: it also says "description").
+      text = JSON.stringify({ faq: [
+        { question: '什麼是空間換時間？', answer: '用更多記憶體換取更快的運算。', related_entities: ['cache'] },
+        { question: '為什麼重要？', answer: '它是系統設計的核心權衡。', related_entities: ['system design'] },
+      ] });
     } else if (prompt.includes('Shorts') || prompt.includes('best moments')) {
       text = JSON.stringify({
         hooks: [{ text: 'This will blow your mind!', timestamp_start: '00:05', timestamp_end: '00:15', hook_type: 'counter_intuitive', emotional_trigger: 'awe', controversy_score: 3, predicted_engagement: { comments: 'medium', shares: 'high', completion_rate: 'high' }, face_detection_required: false }],
