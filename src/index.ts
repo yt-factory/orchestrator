@@ -7,7 +7,7 @@ import { TrendsHook } from './agents/trends-hook';
 import { generateMultiLangSEO } from './agents/seo-expert';
 import { extractShortsHooks } from './agents/shorts-extractor';
 import { matchVoice } from './agents/voice-matcher';
-import { generateNotebookLMScripts, buildAudioConfig, printNextSteps, checkAndUpdateAudioStatus } from './agents/notebooklm-generator';
+import { generateNotebookLMScripts, buildAudioConfig, printNextSteps, checkAndUpdateAudioStatus, type GeneratedScript } from './agents/notebooklm-generator';
 import { logger } from './utils/logger';
 import { normalizeScriptSegments } from './utils/json-parse';
 import { fileHashManager } from './core/file-hash-manager';
@@ -17,6 +17,9 @@ import { ChannelProfileManager } from './core/channel-profile';
 import { buildScriptPrompt } from './prompts/script-prompt-builder';
 import { generateWithSelfScoring, stripQualityMeta } from './prompts/self-scoring';
 import { parseKoan } from './parsers/koan';
+import { getPipelineMode, isStageSkipped, SEO_ONLY_SKIPPED_STAGES } from './config/pipeline-mode';
+import { skippedShorts, skippedVoice, skippedAudio } from './pipeline/skip-stage-helpers';
+import type { ScriptSegment, ShortsExtraction, VoicePersona, NotebookLMAudioConfig } from './core/manifest';
 import { getProvider, type BaseLLMProvider } from './llm/providers';
 import { CostTracker } from './llm/base/cost-tracker';
 
@@ -35,6 +38,11 @@ if (
 
 async function main() {
   logger.info('YT-Factory Orchestrator starting...', { onceMode });
+
+  const pipelineMode = getPipelineMode();
+  logger.info(`Pipeline mode: ${pipelineMode}`, {
+    skippedStages: pipelineMode === 'seo_only' ? [...SEO_ONLY_SKIPPED_STAGES] : [],
+  });
 
   // ============================================
   // Step 1: 初始化组件
@@ -254,50 +262,71 @@ async function processProject(
     // ============================================
     // Stage 2: Script Generation
     // ============================================
+    // PIPELINE_MODE (full vs seo_only). Skipped stages still write their manifest
+    // fields as empty values (D1) so downstream consumers never null-pointer.
+    const pipelineMode = getPipelineMode();
+
+    // Stage outputs, with skip-safe defaults; assigned below when the stage runs.
+    let script: ScriptSegment[] = [];
+    let estimated_duration_seconds = 0;
+    let scriptConfidence = channelProfile.quality.min_confidence_score;
+    let shortsData: ShortsExtraction = skippedShorts();
+    let voice: VoicePersona = skippedVoice();
+    let notebookLMScripts: GeneratedScript[] = [];
+    let audioConfig: NotebookLMAudioConfig = skippedAudio();
+    const projectDir = join('./active_projects', projectId);
+
     progress.startStage(ProcessingStage.SCRIPT_GENERATION);
+    if (isStageSkipped('script_generation', pipelineMode)) {
+      logger.info(`[2/9] Script Generation SKIPPED (PIPELINE_MODE=${pipelineMode})`, {
+        projectId, stage: 'script_generation', skipped: true,
+      });
+      progress.completeStage(ProcessingStage.SCRIPT_GENERATION, { skipped: true });
+    } else {
+      // Build rich script prompt from channel profile
+      const scriptPrompt = buildScriptPrompt(rawContent, channelProfile, language);
 
-    // Build rich script prompt from channel profile
-    const scriptPrompt = buildScriptPrompt(rawContent, channelProfile, language);
-
-    // Generate script with self-scoring for quality assurance
-    const scriptScoredResult = await generateWithSelfScoring<{
-      script: Array<{
-        timestamp: string;
-        voiceover: string;
-        visual_hint: string;
+      // Generate script with self-scoring for quality assurance
+      const scriptScoredResult = await generateWithSelfScoring<{
+        script: Array<{
+          timestamp: string;
+          voiceover: string;
+          visual_hint: string;
+          estimated_duration_seconds: number;
+        }>;
         estimated_duration_seconds: number;
-      }>;
-      estimated_duration_seconds: number;
-    }>(
-      provider,
-      modelDegradation.getDegradedPrompt(scriptPrompt, modelConfig),
-      // tier: smart — core creative script generation.
-      { tier: 'smart', projectId, priority: 'high' },
-      channelProfile.quality.min_confidence_score
-    );
-    const scriptDataRaw = stripQualityMeta(scriptScoredResult.data);
+      }>(
+        provider,
+        modelDegradation.getDegradedPrompt(scriptPrompt, modelConfig),
+        // tier: smart — core creative script generation.
+        { tier: 'smart', projectId, priority: 'high' },
+        channelProfile.quality.min_confidence_score
+      );
+      const scriptDataRaw = stripQualityMeta(scriptScoredResult.data);
 
-    // Normalize visual_hint values (Gemini sometimes generates 'b_roll' instead of 'b-roll')
-    const scriptData = {
-      ...scriptDataRaw,
-      script: normalizeScriptSegments(scriptDataRaw.script ?? []) as Array<{
-        timestamp: string;
-        voiceover: string;
-        visual_hint: 'code_block' | 'diagram' | 'text_animation' | 'b-roll' | 'screen_recording' | 'talking_head_placeholder';
-        estimated_duration_seconds: number;
-      }>
-    };
-    const script = scriptData.script ?? [];
-    const estimated_duration_seconds = scriptData.estimated_duration_seconds ?? 60;
+      // Normalize visual_hint values (Gemini sometimes generates 'b_roll' instead of 'b-roll')
+      const scriptData = {
+        ...scriptDataRaw,
+        script: normalizeScriptSegments(scriptDataRaw.script ?? []) as Array<{
+          timestamp: string;
+          voiceover: string;
+          visual_hint: 'code_block' | 'diagram' | 'text_animation' | 'b-roll' | 'screen_recording' | 'talking_head_placeholder';
+          estimated_duration_seconds: number;
+        }>
+      };
+      script = scriptData.script ?? [];
+      estimated_duration_seconds = scriptData.estimated_duration_seconds ?? 60;
+      scriptConfidence = scriptScoredResult.confidence;
 
-    progress.completeStage(ProcessingStage.SCRIPT_GENERATION, {
-      segmentCount: script.length,
-      durationSec: estimated_duration_seconds,
-      scriptConfidence: scriptScoredResult.confidence
-    });
+      progress.completeStage(ProcessingStage.SCRIPT_GENERATION, {
+        segmentCount: script.length,
+        durationSec: estimated_duration_seconds,
+        scriptConfidence,
+      });
+    }
 
     // ============================================
-    // Stage 3-4: Trend Analysis + SEO Generation
+    // Stage 3-4: Trend Analysis + SEO Generation (always runs)
     // ============================================
     progress.startStage(ProcessingStage.TREND_ANALYSIS);
     // Note: generateMultiLangSEO internally handles both trend analysis and SEO generation
@@ -312,15 +341,24 @@ async function processProject(
     // Stage 5: Shorts Extraction
     // ============================================
     progress.startStage(ProcessingStage.SHORTS_EXTRACTION);
-    const shortsData = await extractShortsHooks(script, projectId, provider);
-    progress.completeStage(ProcessingStage.SHORTS_EXTRACTION, {
-      hooksCount: shortsData.hooks.length,
-      topEmotion: shortsData.hooks[0]?.emotional_trigger,
-      cropFocus: shortsData.vertical_crop_focus
-    });
+    if (isStageSkipped('shorts_extraction', pipelineMode)) {
+      logger.info(`[5/9] Shorts Extraction SKIPPED (PIPELINE_MODE=${pipelineMode})`, {
+        projectId, stage: 'shorts_extraction', skipped: true,
+      });
+      progress.completeStage(ProcessingStage.SHORTS_EXTRACTION, { skipped: true });
+    } else {
+      shortsData = await extractShortsHooks(script, projectId, provider);
+      progress.completeStage(ProcessingStage.SHORTS_EXTRACTION, {
+        hooksCount: shortsData.hooks.length,
+        topEmotion: shortsData.hooks[0]?.emotional_trigger,
+        cropFocus: shortsData.vertical_crop_focus
+      });
+    }
 
     // ============================================
-    // Stage 6: Voice Matching (driven by Channel Profile)
+    // Stage 6: Voice Matching. Visual mood/content_type are cheap, profile-derived,
+    // and consumed downstream by media planning — always computed. Only the
+    // matchVoice LLM-adjacent lookup is skippable.
     // ============================================
     progress.startStage(ProcessingStage.VOICE_MATCHING);
     const mood = (channelProfile.voice.tone[0] === 'energetic' ? 'energetic'
@@ -331,32 +369,45 @@ async function processProject(
       : channelProfile.content_formats[0]?.format_id === 'analysis' ? 'analysis'
       : channelProfile.content_formats[0]?.format_id === 'entertainment' ? 'entertainment'
       : 'tutorial') as 'tutorial' | 'news' | 'analysis' | 'entertainment';
-    const voice = matchVoice(mood, contentType, language);
-    progress.completeStage(ProcessingStage.VOICE_MATCHING, {
-      provider: voice?.provider,
-      style: voice?.style
-    });
+    if (isStageSkipped('voice_matching', pipelineMode)) {
+      logger.info(`[6/9] Voice Matching SKIPPED (matchVoice only; visual kept) (PIPELINE_MODE=${pipelineMode})`, {
+        projectId, stage: 'voice_matching', skipped: true,
+      });
+      progress.completeStage(ProcessingStage.VOICE_MATCHING, { skipped: true });
+    } else {
+      voice = matchVoice(mood, contentType, language);
+      progress.completeStage(ProcessingStage.VOICE_MATCHING, {
+        provider: voice?.provider,
+        style: voice?.style
+      });
+    }
 
     // ============================================
     // Stage 7: NotebookLM Script Generation
     // ============================================
     progress.startStage(ProcessingStage.NOTEBOOKLM_GENERATION);
-    const projectDir = join('./active_projects', projectId);
-    const notebookLMScripts = await generateNotebookLMScripts(
-      {
-        projectId,
-        projectDir,
-        rawContent,
-        languages: ['en', 'zh']
-      },
-      notebooklmClient,
-      channelProfile
-    );
-    const audioConfig = buildAudioConfig(notebookLMScripts);
-    progress.completeStage(ProcessingStage.NOTEBOOKLM_GENERATION, {
-      scriptsGenerated: notebookLMScripts.length,
-      languages: notebookLMScripts.map(s => s.language)
-    });
+    if (isStageSkipped('notebooklm_generation', pipelineMode)) {
+      logger.info(`[7/9] NotebookLM Generation SKIPPED (PIPELINE_MODE=${pipelineMode})`, {
+        projectId, stage: 'notebooklm_generation', skipped: true,
+      });
+      progress.completeStage(ProcessingStage.NOTEBOOKLM_GENERATION, { skipped: true });
+    } else {
+      notebookLMScripts = await generateNotebookLMScripts(
+        {
+          projectId,
+          projectDir,
+          rawContent,
+          languages: ['en', 'zh']
+        },
+        notebooklmClient,
+        channelProfile
+      );
+      audioConfig = buildAudioConfig(notebookLMScripts);
+      progress.completeStage(ProcessingStage.NOTEBOOKLM_GENERATION, {
+        scriptsGenerated: notebookLMScripts.length,
+        languages: notebookLMScripts.map(s => s.language)
+      });
+    }
 
     // ============================================
     // Stage 8: Manifest Update
@@ -410,10 +461,10 @@ async function processProject(
         };
       }
 
-      // Populate quality scores from self-scoring results
+      // Populate quality scores from self-scoring results (default when Stage 2 skipped)
       m.quality_scores = {
-        script_confidence: Math.max(1, Math.min(10, scriptScoredResult.confidence)),
-        retries_needed: scriptScoredResult.confidence < channelProfile.quality.min_confidence_score ? 1 : 0,
+        script_confidence: Math.max(1, Math.min(10, scriptConfidence)),
+        retries_needed: scriptConfidence < channelProfile.quality.min_confidence_score ? 1 : 0,
       };
     });
 
@@ -464,8 +515,13 @@ async function processProject(
       { projectId, provider: provider.name, calls: runCalls, localCacheHits: runLocalHits, realCalls, inputTokens: runInput, cacheHitTokens: runCacheHit, outputTokens: runOutput, costUsd: runCost, prefixCache },
     );
 
-    // Print Next Steps instructions for NotebookLM audio generation
-    printNextSteps(projectId, projectDir, notebookLMScripts);
+    // Print Next Steps for NotebookLM audio generation (skipped in seo_only:
+    // no scripts were generated, so the next step is `make seo`, not NotebookLM).
+    if (notebookLMScripts.length > 0) {
+      printNextSteps(projectId, projectDir, notebookLMScripts);
+    } else {
+      logger.info('SEO ready — run `make seo` to copy the metadata for upload', { projectId });
+    }
 
   } catch (error) {
     // Log pipeline error with the stage that was actually running when it failed

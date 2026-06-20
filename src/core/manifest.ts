@@ -48,10 +48,12 @@ export const ScriptSegmentSchema = z.object({
 // ============================================
 
 export const VoicePersonaSchema = z.object({
-  provider: z.enum(['elevenlabs', 'google_tts', 'azure']),
-  voice_id: z.string(),
-  style: z.enum(['narrative', 'energetic', 'calm', 'professional']),
-  language: z.enum(['en', 'zh', 'ja', 'es', 'de'])
+  // Fields are nullable so PIPELINE_MODE=seo_only can write an explicit
+  // empty voice (skipped Stage 6 matchVoice) instead of omitting it.
+  provider: z.enum(['elevenlabs', 'google_tts', 'azure']).nullable(),
+  voice_id: z.string().nullable(),
+  style: z.enum(['narrative', 'energetic', 'calm', 'professional']).nullable(),
+  language: z.enum(['en', 'zh', 'ja', 'es', 'de']).nullable()
 });
 
 export const VisualPreferenceSchema = z.object({
@@ -165,9 +167,11 @@ export const ShortsHookSchema = z.object({
 });
 
 export const ShortsExtractionSchema = z.object({
-  hooks: z.array(ShortsHookSchema).min(1).max(5),
-  vertical_crop_focus: z.enum(['center', 'left', 'right', 'speaker', 'dynamic']),
-  recommended_music_mood: z.enum(['upbeat', 'dramatic', 'chill', 'none']).optional(),
+  // min(0): an empty hooks array is the honest representation of a skipped
+  // Stage 5 (PIPELINE_MODE=seo_only). crop/music nullable for the same reason.
+  hooks: z.array(ShortsHookSchema).min(0).max(5),
+  vertical_crop_focus: z.enum(['center', 'left', 'right', 'speaker', 'dynamic']).nullable(),
+  recommended_music_mood: z.enum(['upbeat', 'dramatic', 'chill', 'none']).nullable().optional(),
   face_detection_hint: z.boolean().default(false).describe('是否需要人脸检测')
 });
 
@@ -247,7 +251,8 @@ export const AudioLanguageConfigSchema = z.object({
 });
 
 export const NotebookLMAudioConfigSchema = z.object({
-  source: z.enum(['notebooklm', 'azure_tts', 'manual']),
+  // nullable: PIPELINE_MODE=seo_only skips Stage 7 and writes { source: null, languages: {} }.
+  source: z.enum(['notebooklm', 'azure_tts', 'manual']).nullable(),
   languages: z.object({
     en: AudioLanguageConfigSchema.optional(),
     zh: AudioLanguageConfigSchema.optional()
@@ -331,7 +336,9 @@ export const ProjectManifestSchema = z.object({
     script: z.array(ScriptSegmentSchema),
     seo: SEODataSchema,
     shorts: ShortsExtractionSchema,
-    estimated_duration_seconds: z.number().positive(),
+    // nonnegative (not positive): PIPELINE_MODE=seo_only skips Stage 2, so there
+    // is no script and 0 is the honest duration.
+    estimated_duration_seconds: z.number().nonnegative(),
     media_preference: MediaPreferenceSchema
   }).optional(),
 
@@ -428,6 +435,7 @@ export const ProjectManifestSchema = z.object({
 // Type exports
 export type ProjectManifest = z.infer<typeof ProjectManifestSchema>;
 export type ScriptSegment = z.infer<typeof ScriptSegmentSchema>;
+export type VoicePersona = z.infer<typeof VoicePersonaSchema>;
 export type SEOData = z.infer<typeof SEODataSchema>;
 export type ShortsExtraction = z.infer<typeof ShortsExtractionSchema>;
 export type ShortsHook = z.infer<typeof ShortsHookSchema>;
