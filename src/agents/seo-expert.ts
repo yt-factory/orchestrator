@@ -1,4 +1,4 @@
-import type { SEOData } from '../core/manifest';
+import { SUPPORTED_LOCALES, type SEOData, type Locale } from '../core/manifest';
 import type { BaseLLMProvider } from '../llm/providers';
 import type { TrendsHook } from './trends-hook';
 import type { ChannelProfile } from '../core/channel-profile';
@@ -14,8 +14,8 @@ import { safeJsonParse } from '../utils/json-parse';
 // supplementary tags. Structure (title format, description frame, core tags,
 // chapters) is deterministic. Titles/descriptions are no longer fully
 // LLM-generated, and title-ranker / force-regenerate are dropped from this path.
-
-const LOCALES = ['en', 'zh', 'es', 'ja', 'de'] as const;
+//
+// Locales are SUPPORTED_LOCALES (zh_TW, zh_CN_XHS) from the manifest schema.
 
 function validateTrendCoverage(
   titles: string[],
@@ -45,11 +45,6 @@ async function extractPrimaryTopic(
   });
   const parsed = safeJsonParse<{ topic: string }>(result.text, { projectId, operation: 'extractPrimaryTopic' });
   return parsed.topic ?? 'Unknown Topic';
-}
-
-function extractCulturalHooks(description: string): string[] {
-  const sentences = description.split(/[.!?。！？]/).filter(Boolean);
-  return sentences.slice(0, 3).map((s) => s.trim().slice(0, 50));
 }
 
 async function generateFAQ(
@@ -178,14 +173,13 @@ export async function generateMultiLangSEO(
 
   // Step 5: per-locale title (LLM hook + template concat) + templated description
   const regionalResults: Array<{
-    language: 'en' | 'zh' | 'es' | 'ja' | 'de';
+    language: Locale;
     titles: string[];
     description: string;
-    cultural_hooks: string[];
     contains_established_trend: boolean;
   }> = [];
 
-  for (const locale of LOCALES) {
+  for (const locale of SUPPORTED_LOCALES) {
     const hookPrompt = loadPrompt('seo/title-hook', {
       locale,
       channel_name: profile.channel_name,
@@ -220,7 +214,6 @@ export async function generateMultiLangSEO(
       language: locale,
       titles: [title],
       description,
-      cultural_hooks: extractCulturalHooks(description),
       contains_established_trend: validateTrendCoverage([title], establishedTrends).valid,
     });
   }

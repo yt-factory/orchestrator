@@ -103,14 +103,18 @@ export const EntitySchema = z.object({
   wiki_link: z.string().url().optional()
 });
 
+// SEO regional variants: zh_TW (YouTube main channel) + zh_CN_XHS (小红书).
+// Collapsed from 5 (en/zh/es/ja/de) — the active use case is Chinese-only.
+export const SUPPORTED_LOCALES = ['zh_TW', 'zh_CN_XHS'] as const;
+export type Locale = (typeof SUPPORTED_LOCALES)[number];
+
 export const RegionalSEOSchema = z.object({
-  language: z.enum(['en', 'zh', 'es', 'ja', 'de']),
+  language: z.enum(SUPPORTED_LOCALES),
   // Forward-compatible array shape; the Phase-5+ pipeline emits exactly one
   // templated title (hook | chineseName | csConceptEn). Extra slots remain
   // available for multi-title experiments without schema churn.
   titles: z.array(z.string()).min(1).max(5),
   description: z.string().max(5000),
-  cultural_hooks: z.array(z.string()).max(3),
   contains_established_trend: z.boolean()
 });
 
@@ -118,7 +122,7 @@ export const SEODataSchema = z.object({
   primary_language: z.enum(['en', 'zh']),
   tags: z.array(z.string()).max(30),
   chapters: z.string().default(''),
-  regional_seo: z.array(RegionalSEOSchema).min(2),
+  regional_seo: z.array(RegionalSEOSchema).length(2),
   faq_structured_data: z.array(FAQItemSchema).max(5),
   entities: z.array(EntitySchema).max(10),
   injected_trends: z.array(TrendKeywordSchema).max(5).optional(),
