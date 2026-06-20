@@ -145,6 +145,20 @@ run is separately tracked). The authoritative per-run figure is the
 `LLM: … | $…` summary line printed at the end of each pipeline run; `make
 report-cost` aggregates cumulative usage and compares to the baseline.
 
+### Cost reporting — what to trust
+
+Use the right source for the question you're asking:
+
+- **`make cost-dump` — per-run ground truth.** Reads the append-only per-call log
+  and shows each call's tokens, reasoning tokens, and cost for the latest run
+  (or `--project` / `--since`). This is the only thing to use when judging a
+  single run's cost.
+- **`manifest.meta.cost` — CUMULATIVE, not per-run.** It accumulates across every
+  reprocess of that project, so it reads as a per-run figure but isn't. **Do not
+  use it to judge a single run** — reading it that way produced a false
+  cost-regression alarm. `make seo` no longer prints it, for exactly this reason.
+- **`make report-cost`** — process-wide cumulative totals vs the Phase 1 baseline.
+
 ### Verification log
 
 | Date | Run | Provider | Calls | Cost | Cache hit | Notes |

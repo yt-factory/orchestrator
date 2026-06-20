@@ -59,11 +59,14 @@ function main(): void {
       `locale "${locale}" not in manifest; available: ${seo.regional_seo.map((r) => r.language).join(', ')}`,
     );
   }
-  const cost = manifest.meta.cost;
   // Render tags in the requested locale's script/vocabulary (V4 P2): the stored
   // top-level tags are canonical; this normalizes Traditional vs Simplified.
   const localeTags = renderTagsForLocale(seo.tags, locale as TagLocale);
 
+  // NOTE: we deliberately do not surface manifest.meta.cost here — it is
+  // CUMULATIVE across every run of this project and reads as a per-run figure,
+  // which has caused false cost-regression alarms. `make cost-dump` is the
+  // per-run ground truth.
   if (format === 'json') {
     console.log(JSON.stringify({
       project_id: projectId,
@@ -72,7 +75,6 @@ function main(): void {
       description: regional.description,
       tags: localeTags,
       faq: regional.faq,
-      cost,
     }, null, 2));
     return;
   }
@@ -92,10 +94,6 @@ function main(): void {
       out.push(`Q${i + 1}: ${faq.question}`, `A${i + 1}: ${faq.answer}`, '');
     });
   }
-
-  out.push('─'.repeat(60));
-  out.push(`💰  Cost: $${cost.estimated_cost_usd.toFixed(4)} | ${cost.total_tokens_used} tokens | ${cost.api_calls_count} API calls`);
-  out.push('─'.repeat(60));
 
   console.log(out.join('\n'));
 }
