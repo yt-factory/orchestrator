@@ -3,7 +3,8 @@ import type { BaseLLMProvider } from '../llm/providers';
 import type { TrendsHook } from './trends-hook';
 import type { ChannelProfile } from '../core/channel-profile';
 import type { ParsedKoan } from '../parsers/koan';
-import { loadPrompt, renderTemplate } from '../llm/prompts/loader';
+import { loadPrompt } from '../llm/prompts/loader';
+import { renderDescription } from '../seo/description';
 import { extractChapters } from '../seo/chapters';
 import { buildTags, CORE_STATIC_TAGS } from '../seo/tags';
 import { logger } from '../utils/logger';
@@ -124,23 +125,6 @@ export async function generateMultiLangSEO(
   const key_entities = analysisData.key_entities ?? [];
   const factsText = core_facts.join('\n');
 
-  // Step 2: ONE description hook paragraph (Traditional Chinese, brand voice),
-  // reused across locales — the description body is the only LLM part.
-  const descHook = loadPrompt('seo/description-hook', {
-    chinese_name: koan.chineseName,
-    cs_concept_en: koan.csConceptEn,
-    facts: factsText,
-  });
-  const descHookRes = await provider.complete(descHook.system, descHook.user, {
-    tier: 'fast',
-    projectId,
-    priority: 'medium',
-    templateVersion: descHook.version,
-  });
-  const hookParagraph =
-    safeJsonParse<{ hook_paragraph: string }>(descHookRes.text, { projectId, operation: 'descriptionHook' })
-      .hook_paragraph ?? '';
-
   // Step 3: chapters — regex only, never invented
   const chapters = extractChapters(rawContent);
   if (!chapters) {
@@ -199,14 +183,30 @@ export async function generateMultiLangSEO(
     ).trim();
     const title = `${hook} | ${koan.chineseName} | ${koan.csConceptEn}`;
 
-    const description = renderTemplate('templates/description.j2', {
+    // Per-locale description hook (zh_TW Traditional vs zh_CN_XHS Simplified),
+    // generated per locale — not shared (fix for the commit-10 reuse bug).
+    const descHook = loadPrompt('seo/description-hook', {
+      locale,
       chinese_name: koan.chineseName,
-      cs_concept_zh: koan.csConceptZh,
       cs_concept_en: koan.csConceptEn,
-      hook_paragraph: hookParagraph,
+      facts: factsText,
+    });
+    const descHookRes = await provider.complete(descHook.system, descHook.user, {
+      tier: 'fast',
+      projectId,
+      priority: 'medium',
+      templateVersion: descHook.version,
+    });
+    const hookParagraph = safeJsonParse<{ hook_paragraph: string }>(
+      descHookRes.text,
+      { projectId, operation: `descriptionHook:${locale}` },
+    ).hook_paragraph ?? '';
+
+    const description = renderDescription({
+      locale,
+      koan,
+      llm_hook_paragraph: hookParagraph,
       chapters,
-      channel_name: profile.channel_name,
-      tagline: profile.tagline,
       hashtags,
     });
 

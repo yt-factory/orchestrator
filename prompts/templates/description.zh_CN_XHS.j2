@@ -1,0 +1,18 @@
+本期公案：{{ chinese_name }}
+对应 CS 概念：{{ cs_concept_zh }}（{{ cs_concept_en }}）
+
+━━━━━━━━━━━━━━━
+{{ hook_paragraph }}
+━━━━━━━━━━━━━━━
+{% if chapters %}
+📍 时间轴
+{{ chapters }}
+
+━━━━━━━━━━━━━━━
+{% endif %}
+关于极客禅 · GeekZen
+用程序员的语言，讲禅宗公案
+
+🔔 关注作者获取更新
+
+{% for tag in hashtags %}#{{ tag }} {% endfor %}

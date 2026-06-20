@@ -12,6 +12,7 @@
 import nunjucks from 'nunjucks';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import * as OpenCC from 'opencc-js';
 
 const PROMPTS_DIR = join(import.meta.dir, '../../../prompts');
 
@@ -21,6 +22,11 @@ const env = nunjucks.configure(PROMPTS_DIR, {
   trimBlocks: true,
   lstripBlocks: true,
 });
+
+// Simplified -> Traditional (Taiwan variant). Used by zh_TW description templates
+// to convert Simplified koan names/tags to Traditional Chinese.
+const s2tw = OpenCC.Converter({ from: 'cn', to: 'tw' });
+env.addFilter('toTraditional', (text: string) => s2tw(String(text ?? '')));
 
 export interface LoadedPrompt {
   system: string;

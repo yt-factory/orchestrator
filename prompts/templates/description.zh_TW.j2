@@ -1,0 +1,19 @@
+本期公案：{{ chinese_name | toTraditional }}
+對應 CS 概念：{{ cs_concept_zh | toTraditional }}（{{ cs_concept_en }}）
+
+━━━━━━━━━━━━━━━
+{{ hook_paragraph }}
+━━━━━━━━━━━━━━━
+{% if chapters %}
+📍 時間軸
+{{ chapters }}
+
+━━━━━━━━━━━━━━━
+{% endif %}
+關於極客禪 · GeekZen
+用程式設計師的語言，講禪宗公案
+把千年智慧翻譯成當代人能感受的故事
+
+🔔 訂閱頻道 → https://youtube.com/@GeekZen
+
+{% for tag in hashtags %}#{{ tag | toTraditional }} {% endfor %}
