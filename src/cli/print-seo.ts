@@ -12,6 +12,7 @@
 import { readdirSync, readFileSync, statSync, existsSync } from 'fs';
 import { join } from 'path';
 import type { ProjectManifest } from '../core/manifest';
+import { renderTagsForLocale, type TagLocale } from '../templates/filters';
 
 const PROJECTS_DIR = process.env.ACTIVE_PROJECTS_DIR ?? 'active_projects';
 
@@ -59,6 +60,9 @@ function main(): void {
     );
   }
   const cost = manifest.meta.cost;
+  // Render tags in the requested locale's script/vocabulary (V4 P2): the stored
+  // top-level tags are canonical; this normalizes Traditional vs Simplified.
+  const localeTags = renderTagsForLocale(seo.tags, locale as TagLocale);
 
   if (format === 'json') {
     console.log(JSON.stringify({
@@ -66,7 +70,7 @@ function main(): void {
       locale,
       title: regional.titles[0],
       description: regional.description,
-      tags: seo.tags,
+      tags: localeTags,
       faq: regional.faq,
       cost,
     }, null, 2));
@@ -80,7 +84,7 @@ function main(): void {
   out.push('');
   out.push(sep, '📺  YOUTUBE TITLE', sep, regional.titles[0] ?? '(none)', '');
   out.push(sep, '📝  DESCRIPTION (copy-paste to YouTube)', sep, regional.description, '');
-  out.push(sep, `🏷️   TAGS (${seo.tags.length})`, sep, seo.tags.join(', '), '');
+  out.push(sep, `🏷️   TAGS (${localeTags.length})`, sep, localeTags.join(', '), '');
 
   if (regional.faq && regional.faq.length > 0) {
     out.push(sep, `❓  FAQ (${regional.faq.length}) — pinned comment / description bottom`, sep);
