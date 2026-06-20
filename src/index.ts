@@ -22,7 +22,6 @@ import { skippedShorts, skippedVoice, skippedAudio } from './pipeline/skip-stage
 import type { ScriptSegment, ShortsExtraction, VoicePersona, NotebookLMAudioConfig } from './core/manifest';
 import { getProvider, type BaseLLMProvider } from './llm/providers';
 import { CostTracker } from './llm/base/cost-tracker';
-import { resetCallLog } from './llm/base/call-log';
 
 const onceMode = process.argv.includes('--once');
 
@@ -39,9 +38,6 @@ if (
 
 async function main() {
   logger.info('YT-Factory Orchestrator starting...', { onceMode });
-
-  // Truncate the per-call LLM log so `make cost-dump` reflects only this run.
-  resetCallLog();
 
   const pipelineMode = getPipelineMode();
   logger.info(`Pipeline mode: ${pipelineMode}`, {

@@ -6,8 +6,11 @@
 // `make cost-dump` CLI reads it to attribute cost per stage and surface
 // thinking-mode output blowups (reasoning_tokens).
 //
-// It is truncated at process start (resetCallLog() in index.ts main) so a dump
-// reflects exactly the latest run, not an ever-growing history.
+// The log is APPEND-ONLY: truncating on every process start was destructive — a
+// confirmation re-run with no new file would wipe the prior run's data before you
+// could read it. Instead each record carries `projectId` + `ts`, and `make
+// cost-dump` filters to the latest run (or --project / --since). resetCallLog()
+// remains for tests and a manual opt-in reset.
 
 import { appendFileSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';

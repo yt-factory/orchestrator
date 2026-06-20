@@ -193,6 +193,7 @@ export class TrendsHook {
         priority: 'medium',
         templateVersion: version,
         label: 'trends',
+        jsonMode: true,
       });
 
       const parsed = JSON.parse(result.text);

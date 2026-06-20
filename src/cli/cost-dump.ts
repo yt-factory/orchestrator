@@ -1,35 +1,28 @@
-// `make cost-dump` — per-call cost breakdown for the latest run.
+// `make cost-dump` — per-call cost breakdown for a run.
 //
-// Empirical anchor for the V4 P2 cost-regression investigation ($0.0017 ->
-// $0.0414). Reads the per-call log (data/llm-calls.jsonl, truncated at each run
-// start) and prints every completion sorted by cost descending, with the
-// reasoning-token column that exposes DeepSeek thinking-mode output blowups.
+// Empirical anchor for the V4 cost-regression investigation. Reads the
+// append-only per-call log (data/llm-calls.jsonl) and prints every completion
+// sorted by cost descending, with the reasoning-token column that exposes
+// DeepSeek thinking-mode output blowups.
 //
-//   bun run cost-dump
+//   bun run cost-dump                 # latest run only (most-recent projectId)
+//   bun run cost-dump --all           # every logged call
+//   bun run cost-dump --project=<id>  # one project
+//   bun run cost-dump --since=<iso>   # calls at/after an ISO timestamp
 //
-// The "Out/Expected" column compares actual output tokens against the rough
-// size each task SHOULD produce — a ratio far above 1.0 (especially paired with
-// non-zero Reasoning) is the smoking gun for thinking mode being on by default.
+// The "Out/Expected" column compares actual output tokens against the per-task
+// cap in task-config.ts. A ratio far above 1.0 — especially paired with non-zero
+// Reasoning — is the smoking gun for thinking mode being on.
 
 import { readCallRecords, type LLMCallRecord } from '../llm/base/call-log';
+import { maxTokensForTask } from '../llm/task-config';
+import { selectRecords } from './cost-dump-select';
 
-// Rough expected OUTPUT token size per task (the JSON payload we actually want).
-// Keyed by the label prefix before ':'. Diagnostic reference only — this is NOT
-// an enforced max_tokens (that's a separate fix, applied after this report).
-const EXPECTED_OUTPUT_TOKENS: Record<string, number> = {
-  topic: 200,
-  facts: 800,
-  faq: 800,
-  tags: 300,
-  title: 50,
-  description: 400,
-  trends: 300,
-};
-
-function expectedFor(label: string | undefined): number | null {
-  if (!label) return null;
-  const key = label.split(':')[0] ?? label;
-  return EXPECTED_OUTPUT_TOKENS[key] ?? null;
+function ratioCell(rec: LLMCallRecord): string {
+  const expected = maxTokensForTask(rec.label);
+  if (expected === undefined) return `${rec.outputTokens}/?`;
+  const x = (rec.outputTokens / expected).toFixed(1);
+  return `${rec.outputTokens}/${expected} (${x}x)`;
 }
 
 function pad(s: string, width: number): string {
@@ -40,35 +33,25 @@ function padLeft(s: string, width: number): string {
   return s.length >= width ? s : ' '.repeat(width - s.length) + s;
 }
 
-function ratioCell(rec: LLMCallRecord): string {
-  const expected = expectedFor(rec.label);
-  if (expected === null) return `${rec.outputTokens}/?`;
-  const x = (rec.outputTokens / expected).toFixed(1);
-  return `${rec.outputTokens}/${expected} (${x}x)`;
-}
-
 function main(): void {
-  const records = readCallRecords();
-  if (records.length === 0) {
+  const argv = process.argv.slice(2);
+  const allRecords = readCallRecords();
+  if (allRecords.length === 0) {
     console.log('make cost-dump: no calls logged.');
-    console.log('Run a real pipeline first (e.g. `make process` with a live provider);');
-    console.log('the log is truncated at each run start, so MOCK/cached-only runs may be empty.');
+    console.log('Run a real pipeline first (e.g. `make process` with a live provider).');
+    console.log('The log is append-only — MOCK/cached-only runs may still be empty.');
+    return;
+  }
+
+  const { records, scope } = selectRecords(allRecords, argv);
+  if (records.length === 0) {
+    console.log(`make cost-dump: no calls matched (${scope}). Try --all.`);
     return;
   }
 
   const sorted = [...records].sort((a, b) => b.costUsd - a.costUsd);
 
-  const cols = {
-    stage: 24,
-    tier: 6,
-    model: 18,
-    in: 8,
-    out: 8,
-    reason: 10,
-    cost: 10,
-    ratio: 18,
-  };
-
+  const cols = { stage: 24, tier: 6, model: 18, in: 8, out: 8, reason: 10, cost: 10, ratio: 18 };
   const header =
     pad('Stage', cols.stage) +
     pad('Tier', cols.tier) +
@@ -82,7 +65,7 @@ function main(): void {
 
   const lines: string[] = [];
   lines.push('═'.repeat(header.length));
-  lines.push('  LLM COST DUMP — latest run, per call, sorted by cost ↓');
+  lines.push(`  LLM COST DUMP — ${scope}, per call, sorted by cost ↓`);
   lines.push('═'.repeat(header.length));
   lines.push(header);
   lines.push('─'.repeat(header.length));
@@ -129,11 +112,10 @@ function main(): void {
     const reasonPct = ((totalReason / Math.max(totalOut, 1)) * 100).toFixed(0);
     lines.push('');
     lines.push(`⚠️  Reasoning tokens present: ${totalReason} (${reasonPct}% of output tokens).`);
-    lines.push('    DeepSeek thinking mode appears ACTIVE — this is the likely cost driver.');
+    lines.push('    DeepSeek thinking mode is ACTIVE for these calls — expected 0 after the fast-tier fix.');
   } else {
     lines.push('');
-    lines.push('ℹ️  No reasoning tokens reported. If cost is still high, look at the');
-    lines.push('    Out/Expected column for tasks emitting far more output than needed.');
+    lines.push('✅  No reasoning tokens — thinking mode is off for these calls.');
   }
 
   console.log(lines.join('\n'));

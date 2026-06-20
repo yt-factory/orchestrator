@@ -5,7 +5,9 @@
 // `deepseek-reasoner` retire 2026-07-24 15:59 UTC — we use the new ids directly.
 //
 // Both models: 1M context, up to 384K max output, JSON output + tool calling,
-// and support thinking / non-thinking modes (we use non-thinking by default).
+// and support thinking / non-thinking modes. Thinking is ON server-side by default;
+// the provider explicitly disables it for the `fast` tier (see deepseek.ts) — without
+// that param, fast-tier calls spent ~71% of output tokens on reasoning (V4 Case A).
 
 export const DEEPSEEK_MODELS = {
   fast: {

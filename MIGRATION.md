@@ -156,7 +156,8 @@ report-cost` aggregates cumulative usage and compares to the baseline.
 | pending | Live RUN3 (koan B) | deepseek | — | — | — | prefix-cache check (expect ≥80%) |
 | 2026-06-20 | Live seo_only (ep48) | deepseek | 11 | $0.0017 | 0/11 | PIPELINE_MODE=seo_only; 3:23 → 38s, ~80% cost cut |
 | pending | Live per-locale desc (ep48) | deepseek | — | — | — | verify zh_TW ≠ zh_CN_XHS, locale-appropriate |
-| pending | Live cost-dump (ep48) | deepseek | — | — | — | V4 P2 regression $0.0017→$0.0414: run `make cost-dump`, paste per-call table here |
+| 2026-06-20 | Live cost-dump (ep48) | deepseek | 10 | $0.0023 | 20% prefix | Case A confirmed: reasoning ~71% of output (2 calls @ 98%); thinking on by default |
+| 2026-06-20 | Live post thinking-off (ep48, forced cold) | deepseek | 10 | $0.0010 | 16% prefix | reasoning_tokens=0 on all 10 calls; output 6103→1483 tokens; pipeline green |
 
 Append rows; don't edit the prose above.
 
@@ -180,23 +181,54 @@ V4 fixed three issues a live seo_only run surfaced:
 `src/services/aio-feedback-loop.ts` (`AIOFeedbackLoop`) — fully unreferenced and
 the only remaining reader of `faq_structured_data`. Deleted in the same change.
 
-### Cost regression under investigation ($0.0017 → $0.0414, ~24×)
+### Cost regression — diagnosed (Case A) and fixed
 
-A later live run jumped 24× over the seo_only baseline. **Tooling added, fix
-deferred until the live numbers confirm the cause** (no pre-fix on hypothesis):
+A live run jumped 24× over the seo_only baseline. Tooling was added first (no
+pre-fix on hypothesis); the live inline log then **confirmed Case A**: `fast`
+tier (`deepseek-v4-flash`) ran thinking mode by default, with **reasoning tokens
+averaging ~71% of output** (two calls hit 98%).
 
-- DeepSeek `usage.completion_tokens_details.reasoning_tokens` is now captured
+Investigation tooling:
+
+- DeepSeek `usage.completion_tokens_details.reasoning_tokens` is captured
   (`CompletionResult.reasoningTokens`).
-- Every completion (cache hit or real call) is logged to
-  `data/llm-calls.jsonl` (gitignored; truncated at each run start).
+- Every completion (cache hit or real call) is logged to `data/llm-calls.jsonl`
+  (gitignored, **append-only** — see the truncation-trap fix below).
 - `make cost-dump` prints the per-call table sorted by cost, with a **Reason**
-  (thinking) column and an **Out/Expected** ratio. A non-zero Reason total flags
-  DeepSeek thinking mode as the likely driver.
+  (thinking) column and an **Out/Expected** ratio.
 
-Lead hypothesis: `deepseek-v4-flash` runs thinking mode by default and
-`deepseek.ts._doComplete` never disables it, so `fast`-tier SEO calls spend most
-of their output budget on reasoning. The fix (tier-conditional thinking-off +
-per-task `max_tokens`) lands after the live cost-dump confirms it.
+The fix (`deepseek.ts._doComplete`):
+
+- **Thinking off for `fast` tier** via `{ thinking: { type: 'disabled' } }`
+  (DeepSeek param, verified at api-docs.deepseek.com 2026-06-20). `smart` keeps
+  its default — creative copy can benefit from reasoning.
+- **Per-task `max_tokens` caps** (`src/llm/task-config.ts`) as a runaway ceiling:
+  faq 800, facts 800, description 400, trends 300, topic 200, tags 200, title 50.
+- **`jsonMode: true` on all SEO/trends calls.** Live verification surfaced a
+  latent bug: with thinking ON the model wrapped its answer in JSON, but with
+  thinking OFF `title-hook` returned a bare string (`「最稀缺的，從來不是時間」`),
+  failing the parser. Forcing `response_format: json_object` guarantees a JSON
+  envelope regardless of thinking mode (all prompts already contain the literal
+  "json" DeepSeek requires).
+
+Live forced-cold run (ep48, 16% prefix cache): **$0.0010, reasoning_tokens=0 on
+all 10 calls, output 6103→1483 tokens, pipeline green.** A warm run (local
+content-hash cache) is $0; a natural run with ≥20% prefix cache lands ~$0.0008.
+
+**Truncation-trap fix:** the per-call log was truncated on every process start,
+so a "run again to confirm" with no new file wiped the prior run's data before it
+could be read. It is now **append-only**; `make cost-dump` defaults to the latest
+run (most-recent `projectId`) and accepts `--all` / `--project=<id>` / `--since=<iso>`.
+
+#### Cost progression (per koan, seo_only)
+
+| Stage | Cost / koan | Note |
+|-------|-------------|------|
+| Phase 1 baseline | ~$9.21 / 1,274 calls | 100% `gemini-3-pro-preview` (monthly batch) |
+| V3 complete | $0.0017 | seo_only + DeepSeek + cache |
+| V4 commit 1+2 (side effect) | $0.0023 | per-locale FAQ/tags; prefix cache started hitting (~20%) |
+| One bad live run | $0.0414 | thinking mode unbounded (24× spike that triggered this) |
+| V4 thinking-off (measured) | $0.0010 | forced-cold ep48; reasoning=0, output 6103→1483 tokens; ~$0.0008 on a warm prefix-cache run, $0 fully cached |
 
 ---
 

@@ -8,6 +8,7 @@ import { BaseLLMProvider } from '../base/provider';
 import type { CostTracker } from '../base/cost-tracker';
 import type { CompleteOptions, CompletionResult, Tier, TokenUsage } from '../types';
 import { DEEPSEEK_MODELS } from './deepseek-models';
+import { maxTokensForTask } from '../task-config';
 import { logger } from '../../utils/logger';
 
 /** DeepSeek extends OpenAI's usage object with prefix-cache + reasoning counters. */
@@ -85,7 +86,20 @@ export class DeepSeekProvider extends BaseLLMProvider {
       10,
     );
 
-    // OpenAI SDK handles timeout + exponential-backoff retries natively.
+    // V4 cost fix: deepseek-v4-flash runs thinking mode by default (Case A: ~71%
+    // of output tokens were reasoning). Disable it for the `fast` tier — structured
+    // extraction / short hooks don't need chain-of-thought. Leave `smart` on its
+    // default (creative copy can benefit from reasoning). DeepSeek param:
+    // `{ thinking: { type: 'disabled' } }` (api-docs.deepseek.com, verified 2026-06-20).
+    const thinkingOff: Record<string, unknown> =
+      opts.tier === 'fast' ? { thinking: { type: 'disabled' } } : {};
+
+    // Output ceiling: explicit opts.maxTokens wins, else the per-task cap (belt &
+    // suspenders so no task runs away on output regardless of provider behavior).
+    const maxTokens = opts.maxTokens ?? maxTokensForTask(opts.label);
+
+    // OpenAI SDK handles timeout + exponential-backoff retries natively. `thinking`
+    // is a DeepSeek extension passed through the body (cast satisfies the OpenAI types).
     const res = await this.client.chat.completions.create(
       {
         model,
@@ -94,9 +108,10 @@ export class DeepSeekProvider extends BaseLLMProvider {
           { role: 'user', content: userContent }, // variable
         ],
         temperature: opts.temperature ?? 0.7,
-        ...(opts.maxTokens !== undefined ? { max_tokens: opts.maxTokens } : {}),
+        ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
         ...(opts.jsonMode ? { response_format: { type: 'json_object' as const } } : {}),
-      },
+        ...thinkingOff,
+      } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
       { timeout: timeoutMs, maxRetries: opts.maxRetries ?? 3 },
     );
 
