@@ -134,6 +134,24 @@ friendly prompt structure, and template-driven SEO that uses the LLM only for
   `ep48` source; it was recovered from `raw_content` as above. The `compare`
   tool exists so this is never done by hand again.
 
+### Defensive schema design for LLM-generated fields
+
+LLM output is unpredictable: for unfamiliar domains the model invents "more
+precise" values than the schema allows. ep51 (topological sort) returned entity
+types like `"algorithm"` / `"data_structure"` — outside the
+`{tool, concept, person, company, technology}` enum — and `z.enum()` hard-rejected,
+crashing Stage 9 finalization for the **entire** manifest. ep48/49/50 only passed
+by luck (their entities happened to land in-enum).
+
+**Rule:** an enum-constrained field that an LLM populates should
+`z.string().transform()` with a sensible fallback + a `logger.warn`, **not**
+`z.enum()` that hard-rejects. One odd value must never block an otherwise-valid
+manifest. Known application: `EntitySchema.type` → coerced to `"concept"` (see
+`EntityTypeSchema` in `src/core/manifest.ts`). New LLM-generated enum fields
+should follow the same pattern. Pair it with explicit enum guidance in the prompt
+(and bump the prompt `version` so the cache invalidates) to reduce how often the
+fallback fires.
+
 ---
 
 ## Cost outcome

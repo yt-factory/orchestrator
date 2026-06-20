@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { logger } from '../utils/logger';
 
 // ============================================
 // 错误指纹类型 (用于智能降级)
@@ -96,9 +97,25 @@ export const FAQItemSchema = z.object({
   related_entities: z.array(z.string()).max(3)
 });
 
+// LLM-generated enum field: coerce, don't hard-reject. The LLM invents more
+// "precise" types for unfamiliar domains (e.g. "algorithm"/"data_structure" for
+// graph-theory koans), which would crash Stage 9 validation for the whole
+// pipeline. Unknown values degrade to "concept" (the catch-all) with a warning,
+// so one odd entity type never blocks an otherwise-valid manifest.
+export const VALID_ENTITY_TYPES = ['tool', 'concept', 'person', 'company', 'technology'] as const;
+export type ValidEntityType = (typeof VALID_ENTITY_TYPES)[number];
+
+export const EntityTypeSchema = z.string().transform((val): ValidEntityType => {
+  if ((VALID_ENTITY_TYPES as readonly string[]).includes(val)) {
+    return val as ValidEntityType;
+  }
+  logger.warn('Unknown entity type coerced to "concept"', { entityType: val });
+  return 'concept';
+});
+
 export const EntitySchema = z.object({
   name: z.string(),
-  type: z.enum(['tool', 'concept', 'person', 'company', 'technology']),
+  type: EntityTypeSchema,
   description: z.string().max(1000).optional(),  // Permissive for AI-generated SEO descriptions
   wiki_link: z.string().url().optional()
 });
