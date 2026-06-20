@@ -20,6 +20,7 @@ import { PriorityQueue, type Priority } from './priority-queue';
 import { logger } from '../../utils/logger';
 import { computeCacheKey } from '../cache/key';
 import { CacheStore, type CacheEntry } from '../cache/store';
+import { appendCallRecord } from './call-log';
 import type { CostTracking } from '../../core/manifest';
 import type {
   CompleteOptions,
@@ -142,6 +143,21 @@ export abstract class BaseLLMProvider {
         const hit: CompletionResult = { ...cached.result, fromLocalCache: true, costUsd: 0 };
         this.runStats.calls += 1;
         this.runStats.localCacheHits += 1;
+        appendCallRecord({
+          ts: new Date().toISOString(),
+          projectId: opts.projectId,
+          label: opts.label,
+          provider: this.name,
+          model: hit.model,
+          tier: opts.tier,
+          inputTokens: hit.inputTokens,
+          outputTokens: hit.outputTokens,
+          reasoningTokens: hit.reasoningTokens ?? 0,
+          cacheHitTokens: hit.cacheHitTokens,
+          costUsd: 0,
+          fromLocalCache: true,
+          latencyMs: 0,
+        });
         logger.info('LLM completion (local cache hit)', {
           projectId: opts.projectId,
           provider: this.name,
@@ -207,6 +223,22 @@ export abstract class BaseLLMProvider {
         });
       }
 
+      appendCallRecord({
+        ts: new Date().toISOString(),
+        projectId: opts.projectId,
+        label: opts.label,
+        provider: this.name,
+        model: result.model,
+        tier: opts.tier,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        reasoningTokens: result.reasoningTokens ?? 0,
+        cacheHitTokens: result.cacheHitTokens,
+        costUsd: result.costUsd,
+        fromLocalCache: false,
+        latencyMs: result.latencyMs,
+      });
+
       logger.info('LLM completion', {
         projectId: opts.projectId,
         provider: this.name,
@@ -214,6 +246,7 @@ export abstract class BaseLLMProvider {
         tier: opts.tier,
         inputTokens: result.inputTokens,
         outputTokens: result.outputTokens,
+        reasoningTokens: result.reasoningTokens ?? 0,
         cacheHitTokens: result.cacheHitTokens,
         costUsd: result.costUsd,
         latencyMs: result.latencyMs,

@@ -10,12 +10,13 @@ import type { CompleteOptions, CompletionResult, Tier, TokenUsage } from '../typ
 import { DEEPSEEK_MODELS } from './deepseek-models';
 import { logger } from '../../utils/logger';
 
-/** DeepSeek extends OpenAI's usage object with prefix-cache counters. */
+/** DeepSeek extends OpenAI's usage object with prefix-cache + reasoning counters. */
 interface DeepSeekUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
   prompt_cache_hit_tokens?: number;
   prompt_cache_miss_tokens?: number;
+  completion_tokens_details?: { reasoning_tokens?: number };
 }
 
 /** Strip ```json fences in case JSON mode is off and the model wraps output. */
@@ -110,6 +111,7 @@ export class DeepSeekProvider extends BaseLLMProvider {
     const inputTokens = usage?.prompt_tokens ?? Math.ceil((systemPrompt.length + userContent.length) / 4);
     const outputTokens = usage?.completion_tokens ?? Math.ceil(text.length / 4);
     const cacheHitTokens = usage?.prompt_cache_hit_tokens ?? 0;
+    const reasoningTokens = usage?.completion_tokens_details?.reasoning_tokens ?? 0;
     if (usage && usage.prompt_cache_hit_tokens === undefined) {
       logger.warn('DeepSeek usage missing prompt_cache_hit_tokens; reporting 0 cache hits', {
         projectId: opts.projectId,
@@ -125,6 +127,7 @@ export class DeepSeekProvider extends BaseLLMProvider {
       inputTokens,
       outputTokens,
       cacheHitTokens,
+      reasoningTokens,
       costUsd: this.estimateCost(tokenUsage, model),
       fromLocalCache: false,
       latencyMs: 0, // base.complete() overrides with the measured value

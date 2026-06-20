@@ -30,6 +30,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # compare/review artifacts (debug tool output)
 .compare
 
+# per-call LLM cost log (runtime diagnostic, truncated each run; read by `make cost-dump`)
+data/llm-calls.jsonl
+
 # IntelliJ based IDEs
 .idea
 

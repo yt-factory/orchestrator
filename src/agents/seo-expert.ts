@@ -43,6 +43,7 @@ async function extractPrimaryTopic(
     projectId,
     priority: 'high',
     templateVersion: version,
+    label: 'topic',
   });
   const parsed = safeJsonParse<{ topic: string }>(result.text, { projectId, operation: 'extractPrimaryTopic' });
   return parsed.topic ?? 'Unknown Topic';
@@ -60,6 +61,7 @@ async function generateFAQ(
     projectId,
     priority: 'medium',
     templateVersion: version,
+    label: `faq:${locale}`,
   });
   const parsed = safeJsonParse<{ faq: Array<{ question: string; answer: string; related_entities: string[] }> }>(
     result.text,
@@ -113,6 +115,7 @@ export async function generateMultiLangSEO(
     projectId,
     priority: 'high',
     templateVersion: analyst.version,
+    label: 'facts',
   });
   const analysisData = safeJsonParse<{
     core_facts: string[];
@@ -150,6 +153,7 @@ export async function generateMultiLangSEO(
     projectId,
     priority: 'low',
     templateVersion: tagPrompt.version,
+    label: 'tags',
   });
   const llmTags = safeJsonParse<{ tags: string[] }>(tagRes.text, { projectId, operation: 'tagSuggest' }).tags ?? [];
   const tags = buildTags(koan, [...allTrends.map((t) => t.keyword), ...llmTags]);
@@ -179,6 +183,7 @@ export async function generateMultiLangSEO(
       projectId,
       priority: 'medium',
       templateVersion: hookPrompt.version,
+      label: `title:${locale}`,
     });
     const hook = (
       safeJsonParse<{ hook: string }>(hookRes.text, { projectId, operation: `titleHook:${locale}` }).hook ?? ''
@@ -198,6 +203,7 @@ export async function generateMultiLangSEO(
       projectId,
       priority: 'medium',
       templateVersion: descHook.version,
+      label: `description:${locale}`,
     });
     const hookParagraph = safeJsonParse<{ hook_paragraph: string }>(
       descHookRes.text,

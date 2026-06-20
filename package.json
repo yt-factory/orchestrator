@@ -11,6 +11,7 @@
     "clean-llm-cache": "rm -rf .cache/llm",
     "parse-koans": "bun run src/cli/parse-all-koans.ts",
     "report-cost": "bun run src/cli/report-cost.ts",
+    "cost-dump": "bun run src/cli/cost-dump.ts",
     "compare": "bun run src/cli/compare-koan.ts",
     "print-seo": "bun run src/cli/print-seo.ts",
     "typecheck": "tsc --noEmit",

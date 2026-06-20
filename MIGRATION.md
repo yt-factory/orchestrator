@@ -156,8 +156,47 @@ report-cost` aggregates cumulative usage and compares to the baseline.
 | pending | Live RUN3 (koan B) | deepseek | — | — | — | prefix-cache check (expect ≥80%) |
 | 2026-06-20 | Live seo_only (ep48) | deepseek | 11 | $0.0017 | 0/11 | PIPELINE_MODE=seo_only; 3:23 → 38s, ~80% cost cut |
 | pending | Live per-locale desc (ep48) | deepseek | — | — | — | verify zh_TW ≠ zh_CN_XHS, locale-appropriate |
+| pending | Live cost-dump (ep48) | deepseek | — | — | — | V4 P2 regression $0.0017→$0.0414: run `make cost-dump`, paste per-call table here |
 
 Append rows; don't edit the prose above.
+
+## V4 — per-locale fixes + cost investigation
+
+V4 fixed three issues a live seo_only run surfaced:
+
+- **P0 — FAQ was English in both Chinese locales.** `generateFAQ` now takes a
+  `locale` and runs per locale inside the regional loop; the FAQ moved from a
+  single top-level `faq_structured_data` to per-locale `regional_seo[].faq`.
+- **P1 — tags carried stale years / irrelevant concepts / padding.** The trend
+  prompt is constrained (no year numbers, substantive relevance only) and
+  `buildTags` strips any tag containing a 4-digit year (`YEAR_RE`).
+- **P2 — tags were mixed-script for `zh_CN_XHS`** (Traditional `CORE_STATIC_TAGS`
+  shown to a Simplified audience) and **title hooks read alike across locales.**
+  Tags are now rendered per locale at print time via opencc
+  (`renderTagsForLocale`, with a `程式設計師→程序员` override that opencc's `tw2s`
+  misses); the title-hook prompt enforces a distinct voice per locale.
+
+**Dead module removed:** the FAQ schema move uncovered
+`src/services/aio-feedback-loop.ts` (`AIOFeedbackLoop`) — fully unreferenced and
+the only remaining reader of `faq_structured_data`. Deleted in the same change.
+
+### Cost regression under investigation ($0.0017 → $0.0414, ~24×)
+
+A later live run jumped 24× over the seo_only baseline. **Tooling added, fix
+deferred until the live numbers confirm the cause** (no pre-fix on hypothesis):
+
+- DeepSeek `usage.completion_tokens_details.reasoning_tokens` is now captured
+  (`CompletionResult.reasoningTokens`).
+- Every completion (cache hit or real call) is logged to
+  `data/llm-calls.jsonl` (gitignored; truncated at each run start).
+- `make cost-dump` prints the per-call table sorted by cost, with a **Reason**
+  (thinking) column and an **Out/Expected** ratio. A non-zero Reason total flags
+  DeepSeek thinking mode as the likely driver.
+
+Lead hypothesis: `deepseek-v4-flash` runs thinking mode by default and
+`deepseek.ts._doComplete` never disables it, so `fast`-tier SEO calls spend most
+of their output budget on reasoning. The fix (tier-conditional thinking-off +
+per-task `max_tokens`) lands after the live cost-dump confirms it.
 
 ---
 

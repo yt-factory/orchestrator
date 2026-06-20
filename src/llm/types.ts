@@ -44,6 +44,8 @@ export interface CompleteOptions {
   templateVersion?: number;
   /** Bypass the content-hash cache for this call (force a fresh API call). */
   noCache?: boolean;
+  /** Short stage/operation label for per-call cost attribution (e.g. "faq:zh_TW"). */
+  label?: string;
 }
 
 export interface TokenUsage {
@@ -62,6 +64,9 @@ export interface CompletionResult {
   /** Prefix-cache hit tokens (DeepSeek prompt_cache_hit_tokens). 0 if unsupported. */
   cacheHitTokens: number;
   costUsd: number;
+  /** Reasoning/thinking tokens (DeepSeek completion_tokens_details.reasoning_tokens).
+   *  0 / undefined when the model isn't in thinking mode or doesn't report it. */
+  reasoningTokens?: number;
   /** True when served from our own content-hash cache (Phase 3), not the API. */
   fromLocalCache: boolean;
   latencyMs: number;
