@@ -279,15 +279,9 @@ export const NotebookLMScriptMetadataSchema = z.object({
 
 export const CostTrackingSchema = z.object({
   total_tokens_used: z.number().default(0),
-  tokens_by_model: z.object({
-    'gemini-3-pro-preview': z.number().default(0),
-    'gemini-3-flash-preview': z.number().default(0),
-    'gemini-2.5-flash': z.number().default(0)
-  }).default({
-    'gemini-3-pro-preview': 0,
-    'gemini-3-flash-preview': 0,
-    'gemini-2.5-flash': 0
-  }),
+  // Open record: accumulates whatever models actually run (deepseek-v4-flash,
+  // gemini-2.5-pro, etc.) instead of a hardcoded gemini-3 key set.
+  tokens_by_model: z.record(z.string(), z.number()).default({}),
   estimated_cost_usd: z.number().default(0),
   api_calls_count: z.number().default(0)
 });
@@ -390,11 +384,7 @@ export const ProjectManifestSchema = z.object({
     trends_authority_score: z.number().min(0).max(100).optional(),
     cost: CostTrackingSchema.default({
       total_tokens_used: 0,
-      tokens_by_model: {
-        'gemini-3-pro-preview': 0,
-        'gemini-3-flash-preview': 0,
-        'gemini-2.5-flash': 0
-      },
+      tokens_by_model: {},
       estimated_cost_usd: 0,
       api_calls_count: 0
     }),
@@ -420,11 +410,7 @@ export const ProjectManifestSchema = z.object({
     is_fallback_mode: false,
     cost: {
       total_tokens_used: 0,
-      tokens_by_model: {
-        'gemini-3-pro-preview': 0,
-        'gemini-3-flash-preview': 0,
-        'gemini-2.5-flash': 0
-      },
+      tokens_by_model: {},
       estimated_cost_usd: 0,
       api_calls_count: 0
     },

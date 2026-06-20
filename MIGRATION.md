@@ -50,6 +50,28 @@ friendly prompt structure, and template-driven SEO that uses the LLM only for
 - **Tooling**: `make report-cost`, `make compare KOAN=xx`, `process FORCE=1`,
   `clean-llm-cache` — behavior in versioned bun scripts, root Makefile delegates.
 
+### V3 follow-up (SEO-only pipeline)
+
+- **`PIPELINE_MODE=seo_only`**: skips the LLM-heavy stages the NotebookLM-video
+  workflow doesn't need (script, shorts, voice-match, NotebookLM script) —
+  ~3:23 → ~38s, ~$0.0083 → ~$0.0017 per koan. Stage 6's visual mood/content_type
+  still runs (cheap, deterministic, consumed downstream).
+- **Skip-safe schema (forward guidance)**: PIPELINE_MODE-skipped stages produce
+  empty/zero/null values, and the schema tolerates these as honest
+  representations of skipped work — never substitute placeholders. Anyone adding
+  a new pipeline stage must keep this contract: make the field nullable/empty-able
+  rather than faking content (e.g. `estimated_duration_seconds` is `.nonnegative()`
+  so a skipped Stage 2 can write 0).
+- **Locales 5 → 2**: `zh_TW` (YouTube) + `zh_CN_XHS` (小红书); dropped en/es/ja/de.
+  `cultural_hooks` removed from `RegionalSEOSchema`.
+- **Per-locale descriptions**: the description hook is generated per locale (was
+  one shared paragraph — a commit-10 bug). zh_TW renders Traditional via the
+  `opencc-js` `toTraditional` Nunjucks filter; zh_CN_XHS stays Simplified.
+- **`make seo` rewrite**: `src/cli/print-seo.ts` (bun) prints title + description +
+  tags + FAQ + cost in the requested locale (`make seo` / `seo-xhs` / `seo-json`).
+- **`tokens_by_model`** is now an open `z.record` — accumulates whatever models
+  actually run (e.g. `deepseek-v4-flash`) instead of a hardcoded gemini-3 key set.
+
 ---
 
 ## New environment variables
@@ -69,6 +91,7 @@ friendly prompt structure, and template-driven SEO that uses the LLM only for
 | `LLM_CACHE_DIR` | `.cache/llm` | Cache location. |
 | `FORCE_NO_LLM_CACHE` | unset | `1`/`true` bypasses the cache for the run (set by `process:force` / `make process FORCE=1`). |
 | `LLM_RATE_LIMIT_RPM` | `60` | Default per-provider rate when a provider-specific var is unset. |
+| `PIPELINE_MODE` | `full` | `seo_only` skips script/shorts/voice/NotebookLM stages (SEO-only output). Unknown values warn and default to `full`. |
 
 ---
 
@@ -131,6 +154,8 @@ report-cost` aggregates cumulative usage and compares to the baseline.
 | pending | Live RUN1 (koan A) | deepseek | — | — | — | first cold run |
 | pending | Live RUN2 (same koan A) | deepseek | — | — | — | local cache → expect $0 |
 | pending | Live RUN3 (koan B) | deepseek | — | — | — | prefix-cache check (expect ≥80%) |
+| 2026-06-20 | Live seo_only (ep48) | deepseek | 11 | $0.0017 | 0/11 | PIPELINE_MODE=seo_only; 3:23 → 38s, ~80% cost cut |
+| pending | Live per-locale desc (ep48) | deepseek | — | — | — | verify zh_TW ≠ zh_CN_XHS, locale-appropriate |
 
 Append rows; don't edit the prose above.
 
@@ -141,17 +166,34 @@ Append rows; don't edit the prose above.
 These are deliberate deferrals, not oversights — most need the live run to
 decide correctly.
 
-- **Locale-aware hook paragraph.** The description hook paragraph is one
-  Traditional-Chinese paragraph reused across all 5 locales. Fine if the locales
-  are Chinese variants; broken if any is genuinely non-Chinese (en/ja). Decide
-  after the live run.
-- **Locale-aware footer.** The description footer currently mixes scripts —
-  `用程序员的语言` is Simplified; for the Traditional-Chinese (Taiwan-primary)
-  audience it should read `用程式設計師的語言`. Pulls from `profile.tagline`.
-- **5 → 2 locale decision.** Whether to collapse the 5 locales to `zh_TW` +
-  `zh_CN-XHS` or preserve a multilingual set — pending a live-run eyeball of
-  whether the 5 title hooks come back genuinely distinct.
+- **Locale-aware hook paragraph / footer / 5→2 collapse** — ✅ RESOLVED in V3
+  (per-locale description hook; zh_TW Traditional via opencc; collapsed to
+  zh_TW + zh_CN_XHS). Kept here for trace.
+- **Title hook language for zh_TW.** The title-hook LLM output (e.g. 当代码遇见禅)
+  can come back Simplified even for `LOCALE=zh_TW`, and `print-seo` does not run
+  `toTraditional` over `titles[0]` (only the description is converted). Verify on
+  the next live run: if the LLM produces Simplified for zh_TW despite the prompt,
+  strengthen the prompt; if it's the print path, convert `titles[0]` for zh_TW.
 - **Post-audio chapter extraction.** Real chapter timestamps only exist after
   audio renders. A future stage-9 step could extract them from TTS timing and
   write `chapters` back before upload. Until then chapters stay empty (by design,
   never invented).
+
+## Stale schema in sibling repo
+
+`video-renderer/src/core/manifest-parser.ts` is a Zod copy of the orchestrator
+manifest schema that has drifted since commit 10 (assumes `titles.length(5)`,
+`cultural_hooks` required, 5 locales).
+
+Not in active use — `render.mjs` reads the manifest via direct JSON, not through
+this parser. Safe to ignore now but will break if anyone wires it back in.
+
+Resolution: separate video-renderer task to either delete the parser or sync it
+to the current orchestrator schema (1 title, 2 locales, no `cultural_hooks`).
+
+## Locale fallback in render.mjs (active path)
+
+`render.mjs` uses `regional_seo.find(r => r.language === lang) || regional_seo[0]`.
+With the 5→2 collapse, passing any locale other than `zh_TW` or `zh_CN_XHS`
+silently falls back to `regional_seo[0]` (`zh_TW`). Callers should pass one of the
+two supported locales explicitly.

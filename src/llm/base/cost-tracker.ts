@@ -8,12 +8,17 @@ import { logger } from '../../utils/logger';
 // Gemini 3.1 Pro: $2/1M input + $12/1M output ≈ $7/1M blended
 // Gemini 3 Flash: ~$0.50/1M blended
 // Gemini 2.5 Flash: ~$0.15/1M blended
+// Blended (input+output) USD per 1M tokens — a rough global estimate only;
+// authoritative per-call USD lives in CompletionResult.costUsd.
 const TOKEN_PRICES_USD: Record<string, number> = {
   'gemini-3.1-pro-preview': 7.00,
   'gemini-3-pro-preview': 5.00,   // legacy fallback
   'gemini-3-flash': 0.50,
   'gemini-3-flash-preview': 0.50, // legacy fallback
-  'gemini-2.5-flash': 0.15
+  'gemini-2.5-pro': 1.25,
+  'gemini-2.5-flash': 0.15,
+  'deepseek-v4-flash': 0.21,      // ~0.14 in + 0.28 out blended
+  'deepseek-v4-pro': 0.65         // ~0.435 in + 0.87 out blended
 };
 
 const PERSIST_PATH = './data/cost_report.json';
@@ -21,11 +26,7 @@ const PERSIST_PATH = './data/cost_report.json';
 export class CostTracker {
   private data: CostTracking = {
     total_tokens_used: 0,
-    tokens_by_model: {
-      'gemini-3-pro-preview': 0,
-      'gemini-3-flash-preview': 0,
-      'gemini-2.5-flash': 0
-    },
+    tokens_by_model: {},
     estimated_cost_usd: 0,
     api_calls_count: 0
   };
@@ -47,9 +48,8 @@ export class CostTracker {
     this.data.total_tokens_used += tokens;
     this.data.api_calls_count += 1;
 
-    if (model in this.data.tokens_by_model) {
-      this.data.tokens_by_model[model as keyof typeof this.data.tokens_by_model] += tokens;
-    }
+    // Open record: accumulate under whatever model actually ran.
+    this.data.tokens_by_model[model] = (this.data.tokens_by_model[model] ?? 0) + tokens;
 
     // 计算成本
     const price = TOKEN_PRICES_USD[model] || 0;
@@ -71,11 +71,7 @@ export class CostTracker {
   getForProject(): CostTracking {
     return {
       total_tokens_used: 0,
-      tokens_by_model: {
-        'gemini-3-pro-preview': 0,
-        'gemini-3-flash-preview': 0,
-        'gemini-2.5-flash': 0
-      },
+      tokens_by_model: {},
       estimated_cost_usd: 0,
       api_calls_count: 0
     };
@@ -88,9 +84,7 @@ export class CostTracker {
     projectCost.total_tokens_used += tokens;
     projectCost.api_calls_count += 1;
 
-    if (model in projectCost.tokens_by_model) {
-      projectCost.tokens_by_model[model as keyof typeof projectCost.tokens_by_model] += tokens;
-    }
+    projectCost.tokens_by_model[model] = (projectCost.tokens_by_model[model] ?? 0) + tokens;
 
     const price = TOKEN_PRICES_USD[model] || 0;
     projectCost.estimated_cost_usd += (tokens / 1_000_000) * price;
