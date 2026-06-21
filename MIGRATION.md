@@ -143,14 +143,60 @@ types like `"algorithm"` / `"data_structure"` — outside the
 crashing Stage 9 finalization for the **entire** manifest. ep48/49/50 only passed
 by luck (their entities happened to land in-enum).
 
-**Rule:** an enum-constrained field that an LLM populates should
-`z.string().transform()` with a sensible fallback + a `logger.warn`, **not**
-`z.enum()` that hard-rejects. One odd value must never block an otherwise-valid
-manifest. Known application: `EntitySchema.type` → coerced to `"concept"` (see
-`EntityTypeSchema` in `src/core/manifest.ts`). New LLM-generated enum fields
-should follow the same pattern. Pair it with explicit enum guidance in the prompt
-(and bump the prompt `version` so the cache invalidates) to reduce how often the
-fallback fires.
+ep58 (induction) then hit the same class from a different angle: `FAQItem.related_entities`
+is required but the LLM omitted it → Stage 9 rejected the whole manifest again.
+
+**Rule:** every LLM-populated field with a constraint must **coerce-with-warn**,
+never hard-reject. One odd value must never block an otherwise-valid manifest.
+The three failure modes and their helpers live in `src/llm/schema-helpers.ts`:
+
+| Failure mode | Helper | Example |
+|---|---|---|
+| invalid/missing enum | `coerceEnum(valid, fallback, field)` | `entity.type "algorithm" → "concept"` |
+| missing required field | `defaultIfMissing(schema, default, field)` | `faq.related_entities → []` |
+| array/string over cap | `truncateIfOverflow` / `truncateStringIfOverflow` | `related_entities[5] → first 3` |
+
+Each helper takes an optional `onCoerce` callback (defaults to `logger.warn`) so
+tests can assert coercion fired and future eval tooling can count coercions per
+koan as a prompt-quality signal.
+
+#### Full coverage (all LLM-generated manifest fields)
+
+Applied across `src/core/manifest.ts` (commits for EntitySchema, then FAQ + active
+path, then script/shorts/notebooklm):
+
+| Schema | Field(s) | Coercion | Path |
+|---|---|---|---|
+| EntitySchema | `type` | → `"concept"` | active |
+| EntitySchema | `name` / `description` | default `""` / truncate 1000 | active |
+| FAQItemSchema | `related_entities` | default `[]` + truncate 3 | active |
+| FAQItemSchema | `question` / `answer` | default `""` / truncate 200 | active |
+| ScriptSegmentSchema | `visual_hint` | → `"text_animation"` | full (latent) |
+| ScriptSegmentSchema | `timestamp` | invalid → `"00:00"` | full |
+| ScriptSegmentSchema | `voiceover` / `estimated_duration_seconds` | default `""` / → 1 | full |
+| ShortsHookSchema | `hook_type` / `emotional_trigger` | → `quick_tip` / `curiosity` | full |
+| ShortsHookSchema | `predicted_engagement.*` | default obj + each → `medium` | full |
+| ShortsHookSchema | `controversy_score` / `text` | clamp [0,10] / truncate 50 | full |
+| ShortsExtractionSchema | `hooks` | truncate 5 | full |
+| ShortsExtractionSchema | `vertical_crop_focus` / `recommended_music_mood` | coerce, preserve `null` | full |
+| NotebookLMScriptMetadata | `title,bug_report,root_cause,hotfix` | default `""` | full |
+
+Fields computed by deterministic code (`tags`, `chapters`, `description`,
+`titles`, `MediaPreference`, `injected_trends`, `quality_scores` — clamped) are
+**not** in scope. The never-written Part-2 schemas (Monetization, Originality,
+ContentPlan, ShortsCandidate) are unreachable from `ProjectManifestSchema`.
+
+#### Adding a new LLM-generated field — checklist
+
+1. Use a `schema-helpers.ts` helper (or add one only at the 3rd repeat — don't DRY early).
+2. Pair with explicit guidance in the producing prompt + bump its `version` (cache invalidates).
+3. **Find the landmines:** `grep -n "z.enum\|z.array.*\.max\|\.min(1)\|\.positive()\|\.regex(" src/core/manifest.ts`
+   then ask, per hit, "does an LLM populate this?" If yes → coerce.
+
+> **Deferred follow-up (seam left, not built):** the `onCoerce` callback could feed
+> a per-run coercion counter in `make cost-dump` ("3 coercions: faq.related_entities ×2, …")
+> as a prompt-drift signal. Needs `projectId` threaded into the parse path for
+> per-run attribution, so it's left as a seam rather than built now.
 
 ---
 
