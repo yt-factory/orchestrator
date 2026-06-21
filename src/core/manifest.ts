@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { logger } from '../utils/logger';
+import {
+  coerceEnum,
+  defaultIfMissing,
+  truncateIfOverflow,
+  truncateStringIfOverflow,
+} from '../llm/schema-helpers';
 
 // ============================================
 // 错误指纹类型 (用于智能降级)
@@ -91,32 +96,34 @@ export const TrendKeywordSchema = z.object({
 // SEO 数据 (核心商业逻辑)
 // ============================================
 
+// FAQ items come straight from LLM JSON (generateFAQ -> parsed.faq). Every field
+// is defended: missing `related_entities` was the ep58 crash; `answer`/`question`
+// can be absent and `answer`/`related_entities` can overrun their caps. See
+// llm/schema-helpers.ts for the coerce-with-warn rationale.
 export const FAQItemSchema = z.object({
-  question: z.string(),
-  answer: z.string().max(200),
-  related_entities: z.array(z.string()).max(3)
+  question: defaultIfMissing(z.string(), '', 'FAQItem.question'),
+  answer: defaultIfMissing(truncateStringIfOverflow(200, 'FAQItem.answer'), '', 'FAQItem.answer'),
+  related_entities: defaultIfMissing(
+    truncateIfOverflow(z.array(z.string()), 3, 'FAQItem.related_entities'),
+    [],
+    'FAQItem.related_entities',
+  ),
 });
 
 // LLM-generated enum field: coerce, don't hard-reject. The LLM invents more
 // "precise" types for unfamiliar domains (e.g. "algorithm"/"data_structure" for
 // graph-theory koans), which would crash Stage 9 validation for the whole
-// pipeline. Unknown values degrade to "concept" (the catch-all) with a warning,
-// so one odd entity type never blocks an otherwise-valid manifest.
+// pipeline. Unknown values degrade to "concept" (the catch-all) with a warning.
 export const VALID_ENTITY_TYPES = ['tool', 'concept', 'person', 'company', 'technology'] as const;
 export type ValidEntityType = (typeof VALID_ENTITY_TYPES)[number];
 
-export const EntityTypeSchema = z.string().transform((val): ValidEntityType => {
-  if ((VALID_ENTITY_TYPES as readonly string[]).includes(val)) {
-    return val as ValidEntityType;
-  }
-  logger.warn('Unknown entity type coerced to "concept"', { entityType: val });
-  return 'concept';
-});
+export const EntityTypeSchema = coerceEnum(VALID_ENTITY_TYPES, 'concept', 'Entity.type');
 
 export const EntitySchema = z.object({
-  name: z.string(),
+  name: defaultIfMissing(z.string(), '', 'Entity.name'),
   type: EntityTypeSchema,
-  description: z.string().max(1000).optional(),  // Permissive for AI-generated SEO descriptions
+  // Permissive for AI-generated SEO descriptions; truncate rather than reject.
+  description: truncateStringIfOverflow(1000, 'Entity.description').optional(),
   wiki_link: z.string().url().optional()
 });
 
