@@ -1,10 +1,25 @@
 import { z } from 'zod';
+import { logger } from '../utils/logger';
 import {
   coerceEnum,
   defaultIfMissing,
   truncateIfOverflow,
   truncateStringIfOverflow,
 } from '../llm/schema-helpers';
+
+// Allowed value sets for LLM-generated enum fields. Centralized so the schema
+// coercion (coerceEnum) and any future prompt/eval tooling share one source.
+export const VISUAL_HINTS = [
+  'code_block', 'diagram', 'text_animation', 'b-roll', 'screen_recording', 'talking_head_placeholder',
+] as const;
+export const HOOK_TYPES = [
+  'counter_intuitive', 'number_shock', 'controversy', 'quick_tip', 'fomo', 'curiosity', 'awe',
+  'anger', 'validation', 'surprise', 'humor', 'empathy', 'urgency',
+] as const;
+export const EMOTIONAL_TRIGGERS = ['anger', 'awe', 'curiosity', 'fomo', 'validation'] as const;
+export const ENGAGEMENT_LEVELS = ['low', 'medium', 'high'] as const;
+export const CROP_FOCI = ['center', 'left', 'right', 'speaker', 'dynamic'] as const;
+export const MUSIC_MOODS = ['upbeat', 'dramatic', 'chill', 'none'] as const;
 
 // ============================================
 // 错误指纹类型 (用于智能降级)
@@ -35,18 +50,20 @@ export const ErrorHistoryEntrySchema = z.object({
 // 基础类型定义
 // ============================================
 
+// LLM-generated (full-mode Stage 2). Every field defended: a bad timestamp/
+// visual_hint/duration from the LLM must not reject the whole manifest.
 export const ScriptSegmentSchema = z.object({
-  timestamp: z.string().regex(/^\d{2}:\d{2}$/),
-  voiceover: z.string().min(1),
-  visual_hint: z.enum([
-    'code_block',
-    'diagram',
-    'text_animation',
-    'b-roll',
-    'screen_recording',
-    'talking_head_placeholder'
-  ]),
-  estimated_duration_seconds: z.number().positive()
+  timestamp: z.unknown().transform((val): string => {
+    if (typeof val === 'string' && /^\d{2}:\d{2}$/.test(val)) return val;
+    logger.warn('Invalid ScriptSegment.timestamp coerced to "00:00"', { received: val });
+    return '00:00';
+  }),
+  voiceover: defaultIfMissing(z.string(), '', 'ScriptSegment.voiceover'),
+  visual_hint: coerceEnum(VISUAL_HINTS, 'text_animation', 'ScriptSegment.visual_hint'),
+  estimated_duration_seconds: z.number().positive().catch((ctx) => {
+    logger.warn('Invalid ScriptSegment.estimated_duration_seconds, defaulting to 1', { received: ctx.input });
+    return 1;
+  }),
 });
 
 // ============================================
@@ -159,49 +176,59 @@ export const SEODataSchema = z.object({
 // Shorts 提取 (情绪弧度 + CTA 注入)
 // ============================================
 
-export const EmotionalTriggerSchema = z.enum([
-  'anger',
-  'awe',
-  'curiosity',
-  'fomo',
-  'validation'
-]);
+export const EmotionalTriggerSchema = coerceEnum(
+  EMOTIONAL_TRIGGERS, 'curiosity', 'ShortsHook.emotional_trigger',
+);
 
+// LLM-generated (full-mode Stage 5, parsed.hooks). Enums coerce, the engagement
+// object defaults whole-or-per-field, score clamps, text truncates.
 export const ShortsHookSchema = z.object({
-  text: z.string().max(50),
-  timestamp_start: z.string(),
-  timestamp_end: z.string(),
-  hook_type: z.enum([
-    'counter_intuitive',
-    'number_shock',
-    'controversy',
-    'quick_tip',
-    'fomo',
-    'curiosity',
-    'awe',
-    'anger',
-    'validation',
-    'surprise',
-    'humor',
-    'empathy',
-    'urgency'
-  ]),
+  text: defaultIfMissing(truncateStringIfOverflow(50, 'ShortsHook.text'), '', 'ShortsHook.text'),
+  timestamp_start: defaultIfMissing(z.string(), '', 'ShortsHook.timestamp_start'),
+  timestamp_end: defaultIfMissing(z.string(), '', 'ShortsHook.timestamp_end'),
+  hook_type: coerceEnum(HOOK_TYPES, 'quick_tip', 'ShortsHook.hook_type'),
   emotional_trigger: EmotionalTriggerSchema,
-  controversy_score: z.number().min(0).max(10),
-  predicted_engagement: z.object({
-    comments: z.enum(['low', 'medium', 'high']),
-    shares: z.enum(['low', 'medium', 'high']),
-    completion_rate: z.enum(['low', 'medium', 'high'])
+  controversy_score: z.number().catch(0).transform((n): number => {
+    const clamped = Math.max(0, Math.min(10, n));
+    if (clamped !== n) {
+      logger.warn('ShortsHook.controversy_score clamped to [0,10]', { received: n, clamped });
+    }
+    return clamped;
   }),
+  predicted_engagement: defaultIfMissing(
+    z.object({
+      comments: coerceEnum(ENGAGEMENT_LEVELS, 'medium', 'ShortsHook.predicted_engagement.comments'),
+      shares: coerceEnum(ENGAGEMENT_LEVELS, 'medium', 'ShortsHook.predicted_engagement.shares'),
+      completion_rate: coerceEnum(ENGAGEMENT_LEVELS, 'medium', 'ShortsHook.predicted_engagement.completion_rate'),
+    }),
+    { comments: 'medium', shares: 'medium', completion_rate: 'medium' },
+    'ShortsHook.predicted_engagement',
+  ),
   injected_cta: z.string().max(30).optional().describe('针对 anger 类型自动注入')
 });
 
 export const ShortsExtractionSchema = z.object({
-  // min(0): an empty hooks array is the honest representation of a skipped
-  // Stage 5 (PIPELINE_MODE=seo_only). crop/music nullable for the same reason.
-  hooks: z.array(ShortsHookSchema).min(0).max(5),
-  vertical_crop_focus: z.enum(['center', 'left', 'right', 'speaker', 'dynamic']).nullable(),
-  recommended_music_mood: z.enum(['upbeat', 'dramatic', 'chill', 'none']).nullable().optional(),
+  // Empty hooks = honest skipped Stage 5 (seo_only); truncate rather than reject
+  // if the LLM returns >5. crop/music are nullable (null = skipped) and coerce
+  // invalid strings while preserving null/undefined.
+  hooks: truncateIfOverflow(z.array(ShortsHookSchema), 5, 'ShortsExtraction.hooks'),
+  vertical_crop_focus: z.unknown().transform((val): (typeof CROP_FOCI)[number] | null => {
+    if (val === null || val === undefined) return null;
+    if (typeof val === 'string' && (CROP_FOCI as readonly string[]).includes(val)) {
+      return val as (typeof CROP_FOCI)[number];
+    }
+    logger.warn('Invalid ShortsExtraction.vertical_crop_focus coerced to "center"', { received: val });
+    return 'center';
+  }),
+  recommended_music_mood: z.unknown().transform((val): (typeof MUSIC_MOODS)[number] | null | undefined => {
+    if (val === undefined) return undefined;
+    if (val === null) return null;
+    if (typeof val === 'string' && (MUSIC_MOODS as readonly string[]).includes(val)) {
+      return val as (typeof MUSIC_MOODS)[number];
+    }
+    logger.warn('Invalid ShortsExtraction.recommended_music_mood coerced to "none"', { received: val });
+    return 'none';
+  }),
   face_detection_hint: z.boolean().default(false).describe('是否需要人脸检测')
 });
 
@@ -289,11 +316,13 @@ export const NotebookLMAudioConfigSchema = z.object({
   })
 });
 
+// LLM-generated (full-mode Stage 7) narrative strings — default rather than
+// reject if the model omits one. Numbers/datetime are code-supplied with fallbacks.
 export const NotebookLMScriptMetadataSchema = z.object({
-  title: z.string(),
-  bug_report: z.string(),
-  root_cause: z.string(),
-  hotfix: z.string(),
+  title: defaultIfMissing(z.string(), '', 'NotebookLMScriptMetadata.title'),
+  bug_report: defaultIfMissing(z.string(), '', 'NotebookLMScriptMetadata.bug_report'),
+  root_cause: defaultIfMissing(z.string(), '', 'NotebookLMScriptMetadata.root_cause'),
+  hotfix: defaultIfMissing(z.string(), '', 'NotebookLMScriptMetadata.hotfix'),
   estimated_duration_minutes: z.number(),
   shorts_count: z.number(),
   generated_at: z.string().datetime()

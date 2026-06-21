@@ -33,7 +33,7 @@ export function coerceEnum<const T extends readonly [string, ...string[]]>(
   fallback: T[number],
   fieldName: string,
   onCoerce: OnCoerce = defaultOnCoerce,
-): z.ZodType<T[number]> {
+) {
   const valid = validValues as readonly string[];
   return z.unknown().transform((val): T[number] => {
     if (typeof val === 'string' && valid.includes(val)) return val as T[number];
@@ -56,7 +56,7 @@ export function defaultIfMissing<T>(
   defaultValue: T,
   fieldName: string,
   onCoerce: OnCoerce = defaultOnCoerce,
-): z.ZodType<T> {
+) {
   return schema.optional().transform((val): T => {
     if (val === undefined) {
       onCoerce(`Missing ${fieldName}, defaulting`, { field: fieldName, coercedTo: defaultValue });
@@ -72,7 +72,7 @@ export function truncateIfOverflow<T>(
   maxLength: number,
   fieldName: string,
   onCoerce: OnCoerce = defaultOnCoerce,
-): z.ZodType<T[]> {
+) {
   return schema.transform((arr): T[] => {
     if (arr.length > maxLength) {
       onCoerce(`${fieldName} had ${arr.length} items, truncated to ${maxLength}`, {
@@ -91,7 +91,7 @@ export function truncateStringIfOverflow(
   maxChars: number,
   fieldName: string,
   onCoerce: OnCoerce = defaultOnCoerce,
-): z.ZodType<string> {
+) {
   return z.string().transform((s): string => {
     if (s.length > maxChars) {
       onCoerce(`${fieldName} was ${s.length} chars, truncated to ${maxChars}`, {
