@@ -3,6 +3,68 @@
 
 ---
 
+## ⚡ Current Architecture (June 2026) — READ THIS FIRST
+
+> This section reflects the **current** system. Sections below it are historical
+> task spec / session learnings; where they conflict (e.g. a `gemini-3-pro`
+> fallback chain, MCP-routed text generation, 5-locale SEO), **this section
+> wins**. Full rationale & migration steps: [MIGRATION.md](./MIGRATION.md).
+
+### LLM access — provider abstraction + tiers (V2 cost refactor)
+- `LLM_PROVIDER` selects the active provider: **`deepseek`** (primary) | `gemini`.
+- Every call site declares a **tier** — `'fast'` | `'smart'` — and the provider
+  resolves the model (`deepseek-v4-flash` / `deepseek-v4-pro`). No more
+  `gemini-3-pro` fallback chain for pipeline text; Gemini is the fallback provider
+  and still powers the NotebookLM path.
+- DeepSeek `fast` tier **disables thinking mode** (`{ thinking: { type: 'disabled' } }`)
+  and caps output via `src/llm/task-config.ts`. `smart` keeps reasoning.
+- **Content-hash cache** (`src/llm/base/`, `.cache/llm/`): identical call ⇒ $0.
+  DeepSeek **prefix cache** bills shared system prompts at ~2%. Per-koan cost went
+  from a `$9.21` monthly-batch baseline to **~$0.0008**.
+- Calls go through `provider.complete(system, user, { tier, label, jsonMode, ... })`.
+  `label` (e.g. `faq:zh_TW`) drives per-call cost attribution in `make cost-dump`.
+  `jsonMode: true` forces `response_format: json_object` (required since thinking-off
+  made the model occasionally return bare strings).
+
+### Pipeline mode
+- `PIPELINE_MODE=seo_only` runs only stages **1, 3, 4, 8, 9** (SEO output); skips
+  script/shorts/voice/NotebookLM. `full` runs all nine. Skipped stages write honest
+  empty/null/zero, never placeholders. See `src/config/pipeline-mode.ts`.
+
+### SEO — two locales, per-locale
+- `SUPPORTED_LOCALES = ['zh_TW', 'zh_CN_XHS']` (collapsed from 5). Each locale gets
+  its **own** title hook, description, and Chinese-language FAQ.
+- Tags are stored canonical and rendered per locale at print time via `opencc`
+  (`src/templates/filters.ts`, `src/seo/tags.ts`). FAQ lives under
+  `regional_seo[].faq` (not a top-level `faq_structured_data`).
+
+### Resilient validation — coerce-with-warn ("bends, not breaks")
+- Every **LLM-generated** manifest field degrades gracefully instead of rejecting
+  the whole manifest. Helpers in `src/llm/schema-helpers.ts`:
+  `coerceEnum` (invalid/missing enum → fallback), `defaultIfMissing` (missing
+  **or wrong-type** → default), `truncateIfOverflow` / `truncateStringIfOverflow`
+  (over cap → first N). Each emits a `logger.warn`.
+- **Rule for new LLM fields:** never `z.enum()` / required / `.max()` on an
+  LLM-populated field — route it through a helper. Deterministic/code-computed
+  fields (tags, chapters, titles, trend_coverage_score) stay strict.
+- Surfaced by: ep51 (`entity.type "algorithm"`), ep58 (missing `faq.related_entities`).
+  Full coverage table in MIGRATION.md → *Defensive schema design*.
+
+### Tooling (Makefile, one level up)
+`make process | seo | seo-xhs | seo-json | cost-dump | report-cost | compare KOAN=ep48 | typecheck`.
+`make compare` is the **agent-safe** way to re-run one koan (snapshot → run →
+restore; never deletes from `processed/`). `FORCE_NO_LLM_CACHE=1` forces fresh calls.
+
+### Key files (current)
+```
+src/llm/providers/{deepseek,gemini}.ts   src/llm/base/{provider,cost-tracker,call-log}.ts
+src/llm/schema-helpers.ts  src/llm/task-config.ts  src/llm/prompts/loader.ts
+src/config/pipeline-mode.ts  src/templates/filters.ts  src/parsers/koan.ts
+src/cli/{print-seo,cost-dump,compare-koan,report-cost}.ts  prompts/**  MIGRATION.md
+```
+
+---
+
 ## Recent Changes (March 2026)
 
 ### Content Quality System (Phase 1-2)

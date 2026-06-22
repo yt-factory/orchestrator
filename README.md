@@ -1,6 +1,6 @@
 # YT-Factory Orchestrator
 
-The brain of the YT-Factory pipeline — an automated YouTube content production system that orchestrates AI agents and multimedia tools to turn raw text/markdown into publish-ready video projects.
+The brain of the YT-Factory pipeline — an automated YouTube content production system that turns raw text/markdown (e.g. a "极客禅" koan) into publish-ready SEO metadata and, optionally, full video projects.
 
 ## Architecture
 
@@ -13,44 +13,48 @@ The brain of the YT-Factory pipeline — an automated YouTube content production
 │                              │                                      │
 │                              ▼                                      │
 │   ┌──────────────────────────────────────────────────────────┐     │
-│   │              Request Flow Control                         │     │
-│   │  Priority Queue ──> Token Bucket (60/min) ──> Gemini SDK │     │
-│   │       │                    │                      │       │     │
-│   │   [HIGH]              [MEDIUM]                 [LOW]      │     │
-│   │   Script              SEO                      Shorts     │     │
+│   │              LLM Provider Abstraction                     │     │
+│   │  call site declares tier ──> provider resolves model      │     │
+│   │     'fast'  ──> deepseek-v4-flash  (thinking OFF)         │     │
+│   │     'smart' ──> deepseek-v4-pro                           │     │
+│   │  content-hash cache ─┐  prefix cache (98% off) ─┐          │     │
+│   │  priority queue ──> token bucket ──> circuit breaker      │     │
 │   └──────────────────────────────────────────────────────────┘     │
-│                              │                                      │
-│                              ▼                                      │
-│   ┌──────────────────────────────────────────────────────────┐     │
-│   │              Fallback Chain                               │     │
-│   │  gemini-3-pro (3x) → gemini-3-flash (3x) → 2.5-flash (3x)│     │
-│   │  + automatic prompt simplification on fallback            │     │
-│   └──────────────────────────────────────────────────────────┘     │
-│                              │                                      │
+│                              │  (fallback provider: Gemini)         │
 │                              ▼                                      │
 │                     manifest.json per project                       │
+│              (Zod-validated; LLM fields coerce-with-warn)           │
 │                              │                                      │
 │                              ▼                                      │
-│                      video-renderer → YouTube                       │
+│   make seo  (copy-paste metadata)   │   video-renderer → YouTube    │
 │                                                                     │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
+The active provider is selected by `LLM_PROVIDER` (`deepseek` | `gemini`). Every
+call site declares a cost **tier** (`fast` | `smart`); the provider maps that to a
+concrete model. DeepSeek's `fast` tier runs with thinking mode disabled and a
+per-task `max_tokens` cap — see [MIGRATION.md](./MIGRATION.md) for the cost story.
+
 ## Quick Start
 
 ```bash
-# Install dependencies
 cd orchestrator
 bun install
-
-# Create required directories
 mkdir -p incoming active_projects data
 
-# Run in mock mode (no API keys required)
-MOCK_MODE=true bun run src/index.ts
+# Mock mode (no API keys)
+MOCK_MODE=true bun run start
 
-# Run with real APIs
-GEMINI_API_KEY=your_key bun run src/index.ts
+# Real run (DeepSeek primary)
+LLM_PROVIDER=deepseek DEEPSEEK_API_KEY=sk-... bun run process   # --once, then exits
+
+# Or via the repo Makefile (one level up)
+make process            # watch+process incoming, auto-exit
+make seo                # print copy-paste SEO for the latest project (zh_TW)
+make seo-xhs            # same, 小红书 (zh_CN_XHS)
+make cost-dump          # per-call cost breakdown of the latest run
+make compare KOAN=ep48  # re-run one koan safely (snapshot → run → restore)
 ```
 
 ## Tech Stack
@@ -58,13 +62,14 @@ GEMINI_API_KEY=your_key bun run src/index.ts
 | Component | Technology |
 |-----------|-----------|
 | Runtime | Bun |
-| Language | TypeScript (strict) |
-| Validation | Zod |
+| Language | TypeScript (strict, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`) |
+| Validation | Zod v4 |
+| LLM (primary) | DeepSeek via OpenAI-compatible SDK (`deepseek-v4-flash` / `-pro`) |
+| LLM (fallback) | Google Gemini (`@google/generative-ai`) — also the NotebookLM path |
+| Prompts | Nunjucks templates with version frontmatter (externalized under `prompts/`) |
+| Chinese variants | `opencc-js` (Traditional ⇄ Simplified per locale) |
 | File Watch | chokidar |
-| AI SDK | @google/generative-ai |
-| Protocol | MCP SDK |
-| Connection Pool | generic-pool |
-| Rate Limiting | Token Bucket + Priority Queue |
+| Resilience | Token Bucket + Priority Queue + Circuit Breaker + content-hash cache |
 
 ## Project Structure
 
@@ -74,359 +79,224 @@ orchestrator/
 │   ├── core/
 │   │   ├── watcher.ts          # Directory monitoring (chokidar)
 │   │   ├── workflow.ts         # State machine + heartbeat + stale recovery
-│   │   └── manifest.ts         # Zod schema definitions
+│   │   └── manifest.ts         # Zod schema (source of truth) + coerce-with-warn
+│   ├── llm/                    # Provider abstraction (V2 cost refactor)
+│   │   ├── providers/          # deepseek.ts, gemini.ts, model/pricing tables
+│   │   ├── base/               # provider.ts, cost-tracker, cache, call-log
+│   │   ├── prompts/loader.ts   # Nunjucks prompt loader (version-driven cache)
+│   │   ├── schema-helpers.ts   # coerceEnum / defaultIfMissing / truncate*
+│   │   └── task-config.ts      # per-task max_tokens caps
 │   ├── agents/
-│   │   ├── gemini-client.ts    # Gemini SDK (fallback chain + circuit breaker)
-│   │   ├── seo-expert.ts       # Multi-language SEO with trend validation
-│   │   ├── trends-hook.ts      # Google Trends authority scoring + decay
-│   │   ├── shorts-extractor.ts # Emotional arc analysis + CTA injection
-│   │   ├── voice-matcher.ts    # Voice persona recommendation
-│   │   └── notebooklm-generator.ts # NotebookLM bilingual podcast scripts
-│   ├── infra/
-│   │   ├── circuit-breaker.ts  # Service resilience
-│   │   ├── token-bucket.ts     # Rate limiting with jitter
-│   │   └── priority-queue.ts   # Request priority management
-│   ├── utils/
-│   │   ├── logger.ts           # Structured JSON logging
-│   │   ├── retry.ts            # Exponential backoff
-│   │   └── cost-tracker.ts     # Token usage tracking
-│   └── index.ts                # Entry point (strict startup ordering)
-├── incoming/                   # Drop markdown files here
-├── active_projects/            # Projects in progress
-├── data/                       # Persistent data
-│   ├── trends_authority.json   # Keyword authority tracking
-│   └── cost_report.json        # Token usage reports
+│   │   ├── seo-expert.ts       # Per-locale SEO (title/description/FAQ/tags)
+│   │   ├── trends-hook.ts      # Trend authority scoring + decay
+│   │   ├── shorts-extractor.ts # Emotional-arc hooks (full mode)
+│   │   └── notebooklm-generator.ts # Bilingual podcast scripts (full mode)
+│   ├── seo/                    # tags.ts (opencc), chapters.ts (regex)
+│   ├── parsers/koan.ts         # Koan front-matter parser
+│   ├── config/pipeline-mode.ts # PIPELINE_MODE (full | seo_only)
+│   ├── templates/filters.ts    # opencc s2tw/tw2s + per-locale tag rendering
+│   ├── cli/                    # print-seo, cost-dump, compare-koan, report-cost
+│   └── index.ts                # Entry point (9-stage pipeline)
+├── prompts/                    # Externalized system/user prompts (versioned)
+├── incoming/  active_projects/  processed/  data/  .cache/llm/
 └── .env
-```
-
-## Usage Examples
-
-### Example 1: Process a Single Article
-
-```bash
-# 1. Create a test article
-cat > incoming/test-article.md << 'EOF'
-# Why Rust is the Future of Systems Programming
-
-Rust has been gaining significant traction in the systems programming world.
-With its unique ownership model and zero-cost abstractions, it offers memory
-safety without garbage collection.
-
-## Key Features
-- Memory safety without garbage collection
-- Fearless concurrency
-- Zero-cost abstractions
-- Modern tooling with Cargo
-
-## Industry Adoption
-Companies like Microsoft, Google, and Amazon are increasingly adopting Rust
-for critical infrastructure components.
-EOF
-
-# 2. Start the orchestrator (it will auto-detect the file)
-MOCK_MODE=true bun run src/index.ts
-```
-
-**Expected Output:**
-```json
-{"timestamp":"2026-02-02T04:52:00.000Z","level":"info","projectId":"550e8400-...",
- "message":"File detected","path":"incoming/test-article.md","wordCount":89}
-{"timestamp":"2026-02-02T04:52:01.000Z","level":"info","projectId":"550e8400-...",
- "message":"Project created","stage":"INIT"}
-{"timestamp":"2026-02-02T04:52:02.000Z","level":"info","projectId":"550e8400-...",
- "message":"Script generation complete","segments":3}
-{"timestamp":"2026-02-02T04:52:03.000Z","level":"info","projectId":"550e8400-...",
- "message":"SEO generation complete","tags":12,"regions":2}
-{"timestamp":"2026-02-02T04:52:04.000Z","level":"info","projectId":"550e8400-...",
- "message":"Shorts extraction complete","hooks":2,"topEmotion":"curiosity"}
-```
-
-### Example 2: Batch Processing Multiple Articles
-
-```bash
-# Create multiple articles
-for topic in "AI Code Review" "WebAssembly Performance" "GraphQL vs REST"; do
-  echo "# $topic\n\nContent about $topic..." > "incoming/${topic// /-}.md"
-done
-
-# Start orchestrator (processes all files in parallel)
-MOCK_MODE=true MAX_CONCURRENT_CONNECTIONS=5 bun run src/index.ts
-```
-
-### Example 3: Monitor Project Status
-
-```bash
-# Check all active projects
-ls -la active_projects/
-
-# View a specific project manifest
-cat active_projects/550e8400-e29b-41d4-a716-446655440000/manifest.json | jq .
-
-# Check project status
-cat active_projects/*/manifest.json | jq '{id: .project_id, status: .status}'
-```
-
-### Example 4: Use NotebookLM Audio Workflow
-
-```bash
-# 1. Process an article (generates NotebookLM scripts)
-echo "# Deep Learning Explained\n\nNeural networks..." > incoming/deep-learning.md
-MOCK_MODE=true bun run src/index.ts
-
-# 2. Find the generated scripts
-PROJECT_ID=$(ls -t active_projects/ | head -1)
-cat active_projects/$PROJECT_ID/notebooklm_script_en.md
-cat active_projects/$PROJECT_ID/notebooklm_script_zh.md
-
-# 3. Upload scripts to NotebookLM, generate audio, download to:
-#    active_projects/$PROJECT_ID/audio/en.mp3
-#    active_projects/$PROJECT_ID/audio/zh.mp3
-
-# 4. The heartbeat will detect audio files and update manifest
-```
-
-### Example 5: Cost Tracking and Reporting
-
-```bash
-# View cumulative cost report
-cat data/cost_report.json | jq .
-
-# Expected output:
-# {
-#   "total_tokens_used": 45230,
-#   "tokens_by_model": {
-#     "gemini-3-pro": 38000,
-#     "gemini-3-flash": 7230,
-#     "gemini-2.5-flash": 0
-#   },
-#   "estimated_cost_usd": 0.194,
-#   "api_calls_count": 12
-# }
-```
-
-## Configuration
-
-### Environment Variables
-
-```bash
-# .env file
-# ===========================================
-# MCP Gateway Configuration
-# ===========================================
-MCP_GATEWAY_COMMAND=uv run python -m src
-MCP_GATEWAY_CWD=../mcp-gateway/mcp-gateway
-
-# ===========================================
-# API Keys
-# ===========================================
-GEMINI_API_KEY=your_gemini_api_key_here
-
-# ===========================================
-# Mock Mode (for development)
-# ===========================================
-MOCK_MODE=false
-
-# ===========================================
-# Logging
-# ===========================================
-LOG_LEVEL=info    # debug | info | warn | error
-
-# ===========================================
-# Directories
-# ===========================================
-INCOMING_DIR=./incoming
-ACTIVE_PROJECTS_DIR=./active_projects
-DATA_DIR=./data
-
-# ===========================================
-# Rate Limiting
-# ===========================================
-GEMINI_RATE_LIMIT_RPM=60
-MAX_CONCURRENT_CONNECTIONS=5
-
-# ===========================================
-# Timeouts (milliseconds)
-# ===========================================
-GEMINI_API_TIMEOUT_MS=120000          # 2 minutes
-
-# ===========================================
-# Heartbeat & Recovery
-# ===========================================
-HEARTBEAT_INTERVAL_MS=60000           # 1 minute
-STALE_THRESHOLD_ANALYZING_MS=600000   # 10 minutes
-STALE_THRESHOLD_RENDERING_MS=1800000  # 30 minutes
-STALE_THRESHOLD_UPLOADING_MS=300000   # 5 minutes
-MAX_STALE_RECOVERY_COUNT=3
-MAX_RETRIES=3
 ```
 
 ## Processing Pipeline (9 Stages)
 
-| Stage | Name | Description |
+| Stage | Name | `seo_only`? |
 |-------|------|-------------|
-| 1 | INIT | Create project, transition to `analyzing` |
-| 2 | SCRIPT_GENERATION | Generate video script segments with visual hints |
-| 3 | TREND_ANALYSIS | Fetch and analyze trending keywords with authority |
-| 4 | SEO_GENERATION | Multi-language SEO with forced trend coverage |
-| 5 | SHORTS_EXTRACTION | Extract viral hooks with emotional triggers |
-| 6 | VOICE_MATCHING | Match voice persona to content type |
-| 7 | NOTEBOOKLM_GENERATION | Generate bilingual podcast scripts |
-| 8 | MANIFEST_UPDATE | Persist all results to manifest.json |
-| 9 | FINALIZATION | Transition to `pending_audio` or `rendering` |
+| 1 | INIT | ✅ runs |
+| 2 | SCRIPT_GENERATION | ⏭ skipped |
+| 3 | TREND_ANALYSIS | ✅ runs |
+| 4 | SEO_GENERATION (per-locale title/description/FAQ/tags) | ✅ runs |
+| 5 | SHORTS_EXTRACTION | ⏭ skipped |
+| 6 | VOICE_MATCHING | ⏭ skipped |
+| 7 | NOTEBOOKLM_GENERATION | ⏭ skipped |
+| 8 | MANIFEST_UPDATE | ✅ runs |
+| 9 | FINALIZATION | ✅ runs |
+
+`PIPELINE_MODE=seo_only` runs only stages 1/3/4/8/9 (SEO output only). Skipped
+stages write honest empty/null values, never placeholders. `PIPELINE_MODE=full`
+runs all nine.
 
 ## Key Features
 
-### Multi-tier AI Fallback
-```
-gemini-3-pro (3x) → gemini-3-flash (3x) → gemini-2.5-flash (3x)
-```
-- Automatic retry with exponential backoff
-- Prompt simplification on fallback models
-- Circuit breaker for service protection
+### Tiered, cost-optimized LLM access
+- Every call declares `tier: 'fast' | 'smart'`; the provider resolves the model.
+- DeepSeek `fast` disables thinking mode (`{ thinking: { type: 'disabled' } }`)
+  and caps output via `src/llm/task-config.ts` (FAQ 800, title 50, …).
+- Transparent **content-hash cache** (`.cache/llm/`): a repeat of an identical
+  call costs $0. DeepSeek's **prefix cache** bills shared system prompts at ~2% .
+- Per-koan cost dropped from a `$9.21` monthly batch baseline to **~$0.0008**.
 
-### Trend Authority Scoring
-```
-fleeting  → 1 consecutive window (< 6 hours)
-emerging  → 2 consecutive windows (6-12 hours)
-established → 3+ consecutive windows (12+ hours)
-```
-- 24-hour decay for stale keywords
-- Forced trend coverage in titles
+### Two-locale SEO
+- `zh_TW` (YouTube main) and `zh_CN_XHS` (小红书), each with its own title hook,
+  description, and Chinese-language FAQ.
+- Tags are stored canonical and rendered per locale at print time via `opencc`
+  (Traditional for zh_TW, Simplified for zh_CN_XHS).
 
-### Emotional Arc Analysis
+### Resilient schema validation ("bends, not breaks")
+LLM output is probabilistic — it invents enum values, omits required fields,
+returns the wrong type, or overruns caps. Rather than hard-reject the whole
+manifest, every LLM-generated field **coerces with a warning** via
+`src/llm/schema-helpers.ts`:
+
+| Failure mode | Helper | Example |
+|---|---|---|
+| invalid / missing enum | `coerceEnum` | `entity.type "algorithm" → "concept"` |
+| missing **or wrong-type** field | `defaultIfMissing` | `faq.related_entities "x" → []` |
+| array / string over cap | `truncateIfOverflow` / `truncateStringIfOverflow` | `tags[40] → first 30` |
+
+Each coercion emits a `logger.warn` (field, received, coerced-to). The warn rate
+is a prompt-quality signal: frequent warnings on a koan mean the prompt needs
+strengthening. See MIGRATION.md → *Defensive schema design* for the full table.
+
+### Trend authority scoring
+`fleeting` (1 window) → `emerging` (2) → `established` (3+); 24h decay for stale
+keywords; established trends are favored in titles.
+
+### Stale project recovery
+Heartbeat monitors active projects every 60s; stuck projects auto-recover; a dead
+letter state catches repeated failures.
+
+## Cost & observability
+
+```bash
+make cost-dump          # per-call table: stage | tier | model | in | out | reason | cost
+make report-cost        # cumulative totals vs the Phase-1 baseline
 ```
-anger     → High comment rate  → CTA: "你怎么看？"
-awe       → High share rate    → CTA: "太神了吧！"
-curiosity → High completion    → CTA: "想知道结果吗？"
-fomo      → High click rate    → CTA: "别错过了！"
-validation → High like rate    → CTA: "早该这样了"
+
+`make cost-dump` reads the append-only per-call log (`data/llm-calls.jsonl`) and
+shows each call's tokens — including **reasoning tokens** (0 when thinking is off)
+— for the latest run by default (`--all` / `--project=<id>` / `--since=<iso>`).
+
+> ⚠️ `manifest.meta.cost` is **cumulative** across every run of a project — do not
+> read it as a per-run figure. `make cost-dump` is the per-run ground truth.
+> (`make seo` deliberately does not print cost for this reason.)
+
+## Configuration
+
+```bash
+# --- Provider selection ---
+LLM_PROVIDER=deepseek                 # deepseek | gemini
+DEEPSEEK_API_KEY=sk-...               # required when LLM_PROVIDER=deepseek
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+GEMINI_API_KEY=...                    # Gemini provider + NotebookLM path
+MOCK_MODE=false                       # true → mock responses, no keys needed
+
+# --- Pipeline ---
+PIPELINE_MODE=seo_only                # full | seo_only
+
+# --- LLM cache ---
+LLM_CACHE_ENABLED=true                # content-hash cache master switch
+LLM_CACHE_DIR=.cache/llm
+FORCE_NO_LLM_CACHE=                   # 1/true bypasses the cache for the run
+LLM_CALL_LOG=data/llm-calls.jsonl     # per-call log read by cost-dump
+
+# --- Rate / timeout / resilience ---
+LLM_RATE_LIMIT_RPM=60
+DEEPSEEK_API_TIMEOUT_MS=120000
+HEARTBEAT_INTERVAL_MS=60000
+STALE_THRESHOLD_ANALYZING_MS=600000
+MAX_STALE_RECOVERY_COUNT=3
+MAX_RETRIES=3
+LOG_LEVEL=info                        # debug | info | warn | error
 ```
 
-### Stale Project Recovery
-- Heartbeat monitors active projects every 60s
-- Auto-recovery for stuck projects
-- Dead letter queue for repeated failures
-
-## Manifest Schema
-
-The manifest.json is the contract between orchestrator and video-renderer:
+## Manifest Schema (contract with video-renderer)
 
 ```typescript
 {
-  project_id: string,           // UUID
-  status: 'pending' | 'analyzing' | 'pending_audio' | 'rendering' | 'uploading' | 'completed' | 'failed',
-
-  input_source: {
-    local_path: string,
-    raw_content: string,
-    word_count: number
-  },
-
+  project_id: string,
+  status: 'pending' | 'analyzing' | 'pending_audio' | 'rendering' | 'completed' | 'failed' | ...,
+  input_source: { local_path, raw_content, word_count },
   content_engine: {
-    script: [{
-      timestamp: "00:00",
-      voiceover: "...",
-      visual_hint: "code_block" | "diagram" | "text_animation" | ...
-    }],
-
+    script: ScriptSegment[],                 // [] in seo_only
     seo: {
-      tags: string[],
+      tags: string[],                        // canonical; rendered per locale at print
       chapters: string,
-      regional_seo: [{ language, titles, description }],
+      regional_seo: [                        // exactly 2 locales
+        { language: 'zh_TW'|'zh_CN_XHS', titles: string[], description: string,
+          faq: { question, answer, related_entities }[] }
+      ],
+      entities: { name, type, description? }[],
       trend_coverage_score: number
     },
-
-    shorts: {
-      hooks: [{
-        text: string,
-        timestamp_start: string,
-        timestamp_end: string,
-        emotional_trigger: "anger" | "awe" | "curiosity" | "fomo" | "validation",
-        injected_cta: string
-      }]
-    },
-
-    media_preference: {
-      visual: { mood, content_type, theme_suggestion },
-      voice: { provider, voice_id, style }
-    }
+    shorts: ShortsExtraction,                // empty hooks in seo_only
+    media_preference: { visual, voice }
   },
-
-  audio: {
-    source: "notebooklm",
-    languages: {
-      en: { audio_status: "pending" | "ready", duration_seconds: number },
-      zh: { audio_status: "pending" | "ready", duration_seconds: number }
-    }
-  },
-
-  meta: {
-    model_used: string,
-    is_fallback_mode: boolean,
-    cost: { total_tokens_used, estimated_cost_usd }
-  }
+  audio?: { source, languages: { en?, zh? } },
+  meta: { model_used, cost: { total_tokens_used, estimated_cost_usd /* cumulative */ } }
 }
+```
+
+All LLM-populated fields are validated through the coerce-with-warn helpers, so a
+single odd value never rejects the whole manifest.
+
+## Usage Examples
+
+### Process one koan and grab its SEO
+
+```bash
+echo "# 空间换时间 ..." > incoming/ep99_demo.md
+make process                 # auto-detects, processes, exits
+make seo                     # zh_TW title / description / tags / FAQ
+make seo-xhs                 # zh_CN_XHS variant
+```
+
+### Safely re-run a koan (snapshot → run → restore)
+
+```bash
+make compare KOAN=ep48       # never deletes from processed/; restores data files
+FORCE_NO_LLM_CACHE=1 bun run compare ep48   # force fresh API calls (bypass cache)
+```
+
+### Inspect cost of the last run
+
+```bash
+make cost-dump               # latest run, per call, sorted by cost ↓
+bun run cost-dump --all      # every logged call
 ```
 
 ## Troubleshooting
 
-### "Connection refused" to MCP Gateway
+### "DEEPSEEK_API_KEY required"
+Set `DEEPSEEK_API_KEY`, or switch `LLM_PROVIDER=gemini`, or `MOCK_MODE=true`.
+
+### A run cost more than expected
+`make cost-dump` — check the **Reason** column. Non-zero reasoning tokens mean
+thinking mode slipped on (should be 0 for `fast`). High `Out/Expected` ratios
+point at a task overrunning its `max_tokens` budget.
+
+### A koan crashed Stage 9 validation
+Shouldn't happen for LLM fields anymore (they coerce). If it does, the error path
+in the manifest names the field; check whether it's an LLM field that needs a
+helper (see MIGRATION.md → *Defensive schema design*). Grep landmines with:
+`grep -nE "z.enum|\.max\(|\.min\(1\)|\.positive\(\)|\.regex\(" src/core/manifest.ts`.
+
+### Project stuck in `analyzing`
+The 60s heartbeat auto-recovers stale projects. To force: set `status: "pending"`
+in `active_projects/<id>/manifest.json`.
+
+## TypeScript
+
 ```bash
-# Check if gateway is running
-cd ../mcp-gateway/mcp-gateway
-MOCK_MODE=true uv run python -m src
+make typecheck      # tsc --noEmit (orchestrator + video-renderer)
+bun test            # unit + schema-coercion + cost-dump suites
 ```
 
-### "Rate limit exceeded"
-```bash
-# Check token bucket status
-cat data/cost_report.json | jq .api_calls_count
+## Recent Updates
 
-# Reduce concurrency
-MAX_CONCURRENT_CONNECTIONS=2 bun run src/index.ts
-```
-
-### "Project stuck in analyzing"
-```bash
-# Check heartbeat logs
-grep "stale" logs/*.log
-
-# Manual recovery
-cat active_projects/PROJECT_ID/manifest.json | jq '.status = "pending"' > /tmp/m.json
-mv /tmp/m.json active_projects/PROJECT_ID/manifest.json
-```
-
-### "TypeScript compilation errors"
-```bash
-# Verify types
-bun run tsc --noEmit
-
-# Check for strict mode issues
-# See CLAUDE.md "Gotchas" section for common patterns
-```
-
-## Integration
-
-The orchestrator integrates with:
-
-1. **MCP Gateway** - External API access (YouTube, Trends)
-2. **Video Renderer** - Video production from manifest.json
-3. **NotebookLM** - High-quality AI podcast audio (manual step)
-
-```
-orchestrator → manifest.json → video-renderer → YouTube
-     ↓
-  mcp-gateway → Google APIs
-```
-
-## Recent Updates (Feb 2026)
-
-- **Circuit Breaker**: Added service resilience pattern
-- **Bounded Queue**: Priority-based backpressure for API calls
-- **Token Bucket Jitter**: Prevents thundering herd on rate limits
-- **API Timeout**: 2-minute timeout with Promise.race()
-- **Race Condition Fix**: Promise-based locking in FileHashManager
+- **2026-06 (V2–V4 + Resilience).** LLM provider abstraction + DeepSeek primary +
+  tiered models; content-hash cache; `PIPELINE_MODE=seo_only`; 2-locale per-locale
+  SEO (title/description/FAQ); thinking-mode-off + per-task `max_tokens`
+  (~24× cost cut); `make cost-dump`; and systematic coerce-with-warn validation
+  for every LLM-generated schema field. Full detail in [MIGRATION.md](./MIGRATION.md).
+- **2026-02.** Circuit breaker, bounded priority queue, token-bucket jitter, API
+  timeouts, FileHashManager race fix.
 
 ---
 
-*Part of the [YT-Factory](../docs/SETUP.md) YouTube automation ecosystem*
+*Part of the [YT-Factory](../docs/SETUP.md) YouTube automation ecosystem.
+Migration history & design rationale: [MIGRATION.md](./MIGRATION.md).*
