@@ -57,13 +57,23 @@ export function defaultIfMissing<T>(
   fieldName: string,
   onCoerce: OnCoerce = defaultOnCoerce,
 ) {
-  return schema.optional().transform((val): T => {
-    if (val === undefined) {
-      onCoerce(`Missing ${fieldName}, defaulting`, { field: fieldName, coercedTo: defaultValue });
-      return defaultValue;
-    }
-    return val;
-  });
+  // `.catch` funnels BOTH absence and wrong-type to the default: an LLM may
+  // return e.g. `related_entities` as a bare string or `question` as a number.
+  // optional() lets a missing key reach the transform as undefined; catch()
+  // turns any validation failure of a *present* value into undefined too.
+  return schema
+    .optional()
+    .catch(() => undefined)
+    .transform((val): T => {
+      if (val === undefined) {
+        onCoerce(`Missing or invalid ${fieldName}, defaulting`, {
+          field: fieldName,
+          coercedTo: defaultValue,
+        });
+        return defaultValue;
+      }
+      return val;
+    });
 }
 
 /** Pattern D (array) — keep the first `maxLength` elements when the LLM overruns. */

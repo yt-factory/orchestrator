@@ -52,6 +52,15 @@ describe('defaultIfMissing', () => {
     expect(defaultIfMissing(z.array(z.string()), [], 'faq.related_entities', s.fn).parse(undefined)).toEqual([]);
     expect(s.calls[0]!.context).toMatchObject({ field: 'faq.related_entities' });
   });
+
+  test('wrong-TYPE value falls back to default (not just missing)', () => {
+    const s = spy();
+    // LLM returns a bare string where an array is expected — must not crash.
+    expect(defaultIfMissing(z.array(z.string()), [], 'related', s.fn).parse('cache')).toEqual([]);
+    // ...or a number where a string is expected.
+    expect(defaultIfMissing(z.string(), '', 'question', s.fn).parse(123)).toBe('');
+    expect(s.calls).toHaveLength(2);
+  });
 });
 
 describe('truncateIfOverflow', () => {

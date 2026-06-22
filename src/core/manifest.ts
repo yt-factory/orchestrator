@@ -139,8 +139,9 @@ export const EntityTypeSchema = coerceEnum(VALID_ENTITY_TYPES, 'concept', 'Entit
 export const EntitySchema = z.object({
   name: defaultIfMissing(z.string(), '', 'Entity.name'),
   type: EntityTypeSchema,
-  // Permissive for AI-generated SEO descriptions; truncate rather than reject.
-  description: truncateStringIfOverflow(1000, 'Entity.description').optional(),
+  // Permissive for AI-generated SEO descriptions; truncate rather than reject,
+  // and drop (undefined) rather than crash if the LLM returns a non-string.
+  description: truncateStringIfOverflow(1000, 'Entity.description').optional().catch(() => undefined),
   wiki_link: z.string().url().optional()
 });
 
@@ -211,7 +212,11 @@ export const ShortsExtractionSchema = z.object({
   // Empty hooks = honest skipped Stage 5 (seo_only); truncate rather than reject
   // if the LLM returns >5. crop/music are nullable (null = skipped) and coerce
   // invalid strings while preserving null/undefined.
-  hooks: truncateIfOverflow(z.array(ShortsHookSchema), 5, 'ShortsExtraction.hooks'),
+  hooks: defaultIfMissing(
+    truncateIfOverflow(z.array(ShortsHookSchema), 5, 'ShortsExtraction.hooks'),
+    [],
+    'ShortsExtraction.hooks',
+  ),
   vertical_crop_focus: z.unknown().transform((val): (typeof CROP_FOCI)[number] | null => {
     if (val === null || val === undefined) return null;
     if (typeof val === 'string' && (CROP_FOCI as readonly string[]).includes(val)) {

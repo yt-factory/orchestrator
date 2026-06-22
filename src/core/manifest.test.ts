@@ -76,6 +76,14 @@ describe('FAQItemSchema defensive coercion', () => {
     const item = { question: '什麼是空間換時間？', answer: '用記憶體換速度。', related_entities: ['cache'] };
     expect(FAQItemSchema.parse(item)).toEqual(item);
   });
+
+  test('wrong-TYPE fields fall back instead of crashing (related_entities as string, question as number)', () => {
+    const r = FAQItemSchema.parse({ question: 123, answer: 'A.', related_entities: 'cache' });
+    expect(r.question).toBe('');
+    expect(r.related_entities).toEqual([]);
+    // array of non-strings also degrades, not crashes
+    expect(FAQItemSchema.parse({ question: 'Q', answer: 'A', related_entities: [1, 2] }).related_entities).toEqual([]);
+  });
 });
 
 describe('ScriptSegmentSchema defensive coercion', () => {
@@ -134,6 +142,10 @@ describe('ShortsExtractionSchema defensive coercion', () => {
   test('hooks over 5 are truncated', () => {
     const hooks = Array.from({ length: 8 }, () => ({ ...VALID_HOOK }));
     expect(ShortsExtractionSchema.parse({ hooks, vertical_crop_focus: 'center' }).hooks).toHaveLength(5);
+  });
+
+  test('non-array hooks degrade to [] instead of crashing', () => {
+    expect(ShortsExtractionSchema.parse({ hooks: 'oops', vertical_crop_focus: 'center' }).hooks).toEqual([]);
   });
 
   test('null vertical_crop_focus / music preserved (skipped Stage 5)', () => {
