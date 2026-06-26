@@ -1,3 +1,4 @@
+import { jsonrepair } from 'jsonrepair';
 import { logger } from './logger';
 
 /**
@@ -53,29 +54,140 @@ export function normalizeContentEngine(contentEngine: unknown): unknown {
 }
 
 /**
- * Safely parse JSON from Gemini response with error handling.
- * Returns the parsed object or throws with helpful error context.
+ * Layer A — repair-aware parse. Tries a clean `JSON.parse`; on failure, hands the
+ * raw text to `jsonrepair` (fixes common LLM JSON defects: trailing commas,
+ * misplaced/mismatched braces, smart quotes, unquoted keys, truncated tails).
+ *
+ * LLM JSON is not guaranteed well-formed even in `json_object` mode, so the raw
+ * string → object boundary needs its own defense — this sits *before* the Zod
+ * schema-helpers (which only run once parsing has already succeeded).
+ *
+ * Returns `{ value, recovery }` so callers can observe whether a repair happened.
+ * Throws only when both clean parse AND repair fail.
+ */
+export function parseWithRepair<T>(
+  text: string,
+  context: { projectId?: string | undefined; operation: string }
+): { value: T; recovery: 'clean' | 'repaired' } {
+  try {
+    return { value: JSON.parse(text) as T, recovery: 'clean' };
+  } catch (cleanError) {
+    logger.warn('JSON parse failed, attempting repair', {
+      projectId: context.projectId,
+      operation: context.operation,
+      error: (cleanError as Error).message,
+      rawTextPreview: text.slice(0, 200),
+    });
+
+    try {
+      const value = JSON.parse(jsonrepair(text)) as T;
+      logger.warn('JSON repaired successfully', {
+        projectId: context.projectId,
+        operation: context.operation,
+      });
+      return { value, recovery: 'repaired' };
+    } catch (repairError) {
+      logger.error('JSON parse failed (repair also failed)', {
+        projectId: context.projectId,
+        operation: context.operation,
+        cleanError: (cleanError as Error).message,
+        repairError: (repairError as Error).message,
+        rawTextPreview: text.slice(0, 500),
+      });
+
+      throw new Error(
+        `Failed to parse JSON in ${context.operation}: ${(repairError as Error).message}. ` +
+        `Raw response starts with: "${text.slice(0, 100)}..."`
+      );
+    }
+  }
+}
+
+/**
+ * Safely parse JSON from an LLM response.
+ *
+ * Backwards-compatible signature, now with Layer A (jsonrepair) folded in: a
+ * malformed-but-repairable payload is silently fixed instead of throwing. Throws
+ * only when the text is beyond repair. For graceful skip-and-continue semantics
+ * (repair → retry → fallback), use {@link robustJsonParse} instead.
  */
 export function safeJsonParse<T>(
   text: string,
   context: { projectId: string; operation: string }
 ): T {
-  try {
-    return JSON.parse(text) as T;
-  } catch (error) {
-    // Log the raw response for debugging
-    logger.error('JSON parse failed', {
-      projectId: context.projectId,
-      operation: context.operation,
-      error: (error as Error).message,
-      rawTextPreview: text.slice(0, 500)
-    });
+  return parseWithRepair<T>(text, context).value;
+}
 
-    throw new Error(
-      `Failed to parse JSON in ${context.operation}: ${(error as Error).message}. ` +
-      `Raw response starts with: "${text.slice(0, 100)}..."`
-    );
+export type Recovery = 'clean' | 'repaired' | 'retried' | 'fallback';
+
+export interface RobustParseOptions<T> {
+  /** Logging label, e.g. "generateFAQ:zh_CN_XHS". */
+  operation: string;
+  projectId?: string;
+  /**
+   * Schema-valid empty value returned when all parse strategies fail. Must keep
+   * downstream Zod validation happy (e.g. `{ faq: [] }`, not `null`, for a FAQ site).
+   */
+  fallback: T;
+  /**
+   * Optional callback to re-invoke the LLM once when repair fails. Should request
+   * a fresh, cache-bypassing completion with a corrective hint. Its returned text
+   * is itself run through repair before falling back.
+   */
+  retry?: () => Promise<string>;
+}
+
+/**
+ * Layer A + B + C — the full skip-and-continue parser for LLM output.
+ *
+ *   A. clean parse → jsonrepair        (silent fix for most LLM JSON defects)
+ *   B. retry()     → re-invoke LLM     (corrective prompt, repair the retry too)
+ *   C. fallback    → schema-valid empty (warn + continue; never crash the stage)
+ *
+ * A local field failure degrades that one field, not the whole manifest. Critical
+ * fields should still fail-fast — the caller decides by inspecting `recovery`
+ * (e.g. throw when `recovery === 'fallback'` for title/description).
+ */
+export async function robustJsonParse<T>(
+  text: string,
+  opts: RobustParseOptions<T>
+): Promise<{ value: T; recovery: Recovery }> {
+  // Layers A (clean + repair)
+  try {
+    return parseWithRepair<T>(text, opts);
+  } catch {
+    // fall through to retry / fallback
   }
+
+  // Layer B — retry once via the LLM, repairing the retry output too.
+  if (opts.retry) {
+    try {
+      const retried = await opts.retry();
+      const { value } = parseWithRepair<T>(retried, {
+        projectId: opts.projectId,
+        operation: `${opts.operation}:retry`,
+      });
+      logger.warn('JSON parse succeeded on retry', {
+        projectId: opts.projectId,
+        operation: opts.operation,
+      });
+      return { value, recovery: 'retried' };
+    } catch (retryError) {
+      logger.warn('JSON retry also failed', {
+        projectId: opts.projectId,
+        operation: opts.operation,
+        error: (retryError as Error).message,
+      });
+    }
+  }
+
+  // Layer C — graceful fallback.
+  logger.error('All JSON parse strategies failed, using fallback', {
+    projectId: opts.projectId,
+    operation: opts.operation,
+    rawTextPreview: text.slice(0, 200),
+  });
+  return { value: opts.fallback, recovery: 'fallback' };
 }
 
 /**

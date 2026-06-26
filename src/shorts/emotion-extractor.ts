@@ -1,6 +1,7 @@
 import { ShortsCandidate, ScriptSegment } from '../core/manifest';
 import type { BaseLLMProvider } from '../llm/providers';
 import { logger } from '../utils/logger';
+import { safeJsonParse } from '../utils/json-parse';
 
 // Emotion-to-CTA mapping for viral optimization
 const EMOTION_CTA_MAP: Record<string, string[]> = {
@@ -236,7 +237,7 @@ Prioritize:
         priority: 'low'
       });
 
-      const parsed = JSON.parse(result.text);
+      const parsed = safeJsonParse<any[]>(result.text, { projectId, operation: 'emotionExtract' });
       const candidates: ShortsCandidate[] = [];
 
       // Calculate cumulative time for timestamp mapping

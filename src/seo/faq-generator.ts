@@ -1,6 +1,7 @@
 import { ExtendedFAQItem, ScriptSegment } from '../core/manifest';
 import type { BaseLLMProvider } from '../llm/providers';
 import { logger } from '../utils/logger';
+import { safeJsonParse } from '../utils/json-parse';
 
 // FAQ patterns with historical AIO success rates
 const FAQ_PATTERNS: Record<
@@ -210,7 +211,7 @@ Output as JSON array:
         priority: 'medium'
       });
 
-      const parsed = JSON.parse(result.text);
+      const parsed = safeJsonParse<any[]>(result.text, { projectId, operation: 'aioFaqGenerate' });
       return parsed.map((item: any) => ({
         question: item.question,
         answer: item.answer.slice(0, 200),
@@ -369,7 +370,7 @@ Output as JSON array:
         priority: 'low'
       });
 
-      return JSON.parse(result.text);
+      return safeJsonParse(result.text, { projectId, operation: 'faqEntityExtract' });
     } catch (error) {
       logger.warn('Entity extraction failed', {
         projectId,

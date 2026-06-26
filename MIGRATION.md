@@ -198,6 +198,43 @@ ContentPlan, ShortsCandidate) are unreachable from `ProjectManifestSchema`.
 > as a prompt-drift signal. Needs `projectId` threaded into the parse path for
 > per-run attribution, so it's left as a seam rather than built now.
 
+### JSON parse defense (Layer 3 for LLM unpredictability)
+
+The schema-helpers above are **Layer 1/2** defenses — they coerce *parsed objects*.
+They never engage if the LLM emits **syntactically broken JSON**, because
+`JSON.parse()` (string → object) fails one layer earlier than schema validation
+(object → typed). DeepSeek `json_object` mode only *encourages* well-formed JSON;
+it doesn't guarantee it.
+
+| Layer | Bug form | Defense |
+|---|---|---|
+| L1 (ep51) | valid JSON, value not in enum | `coerceEnum` |
+| L2 (ep58) | valid JSON, missing required field | `defaultIfMissing` |
+| **L3 (ep99)** | **JSON syntax itself is broken** | **`robustJsonParse` (this section)** |
+
+Three layers wrap every LLM-output parse, in `src/utils/json-parse.ts`:
+
+1. **`jsonrepair`** — auto-fixes common LLM JSON defects (trailing commas, misplaced/
+   mismatched braces, smart quotes, unquoted keys, markdown ```json fences, and
+   `max_tokens`-truncated tails by closing open braces). Folded into `safeJsonParse`,
+   so all existing call sites gain it with no change.
+2. **Retry** — `robustJsonParse` re-invokes the LLM once with a corrective hint and
+   `noCache: true` (a cached call would replay the same bad text).
+3. **Fallback** — returns a schema-valid empty value (`{ faq: [] }`, `{ hook: '' }`, …)
+   + `logger.error`, so one malformed field degrades that field, not the whole stage.
+
+The SEO path is template-driven (LLM only supplies "点睛" hooks), so every field there
+degrades gracefully — empty hook still yields a usable `… | 中文名 | CS Concept` title.
+For a genuinely fatal field, inspect the returned `recovery` and fail-fast on
+`'fallback'`.
+
+**Rule for new LLM-output parses:** use `robustJsonParse()` (skip-and-continue) or at
+least `safeJsonParse()` (repair-aware) — never bare `JSON.parse()`. Disk/internal JSON
+(our own well-formed files) stays on plain `JSON.parse`.
+
+Discovered after ep99 (deadlock) failed Stage 3 with `related_entities` placed outside
+the FAQ item object. Adds the `jsonrepair` dependency (zero-dep, MIT).
+
 ---
 
 ## Cost outcome

@@ -3,12 +3,38 @@ import type { BaseLLMProvider } from '../llm/providers';
 import type { TrendsHook } from './trends-hook';
 import type { ChannelProfile } from '../core/channel-profile';
 import type { ParsedKoan } from '../parsers/koan';
+import type { Priority } from '../llm/base/priority-queue';
 import { loadPrompt } from '../llm/prompts/loader';
 import { renderDescription } from '../seo/description';
 import { extractChapters } from '../seo/chapters';
 import { buildTags, CORE_STATIC_TAGS } from '../seo/tags';
 import { logger } from '../utils/logger';
-import { safeJsonParse } from '../utils/json-parse';
+import { robustJsonParse } from '../utils/json-parse';
+
+// Builds a Layer-B retry callback: re-invokes the LLM once with a corrective hint
+// and the cache bypassed (a cached call would just replay the same malformed text).
+function correctiveRetry(
+  provider: BaseLLMProvider,
+  system: string,
+  user: string,
+  opts: { projectId: string; label: string; priority: Priority },
+): () => Promise<string> {
+  return async () => {
+    const res = await provider.complete(
+      system,
+      `${user}\n\nIMPORTANT: Your previous output was malformed JSON. Return ONLY valid JSON — no markdown fences, no preamble, no commentary.`,
+      {
+        tier: 'fast',
+        projectId: opts.projectId,
+        priority: opts.priority,
+        label: `${opts.label}:retry`,
+        jsonMode: true,
+        noCache: true,
+      },
+    );
+    return res.text;
+  };
+}
 
 // Phase 5: SEO is template-driven. The LLM is used only for "点睛" touches —
 // a per-locale title hook, one description hook paragraph, and a few
@@ -46,7 +72,12 @@ async function extractPrimaryTopic(
     label: 'topic',
     jsonMode: true,
   });
-  const parsed = safeJsonParse<{ topic: string }>(result.text, { projectId, operation: 'extractPrimaryTopic' });
+  const { value: parsed } = await robustJsonParse<{ topic: string }>(result.text, {
+    projectId,
+    operation: 'extractPrimaryTopic',
+    fallback: { topic: 'Unknown Topic' },
+    retry: correctiveRetry(provider, system, user, { projectId, label: 'topic', priority: 'high' }),
+  });
   return parsed.topic ?? 'Unknown Topic';
 }
 
@@ -65,10 +96,16 @@ async function generateFAQ(
     label: `faq:${locale}`,
     jsonMode: true,
   });
-  const parsed = safeJsonParse<{ faq: Array<{ question: string; answer: string; related_entities: string[] }> }>(
-    result.text,
-    { projectId, operation: `generateFAQ:${locale}` },
-  );
+  // ep99: LLM placed `related_entities` outside the FAQ item object, breaking
+  // JSON.parse() before any schema-helper could engage. Repair → retry → empty FAQ.
+  const { value: parsed } = await robustJsonParse<{
+    faq: Array<{ question: string; answer: string; related_entities: string[] }>;
+  }>(result.text, {
+    projectId,
+    operation: `generateFAQ:${locale}`,
+    fallback: { faq: [] },
+    retry: correctiveRetry(provider, system, user, { projectId, label: `faq:${locale}`, priority: 'medium' }),
+  });
   return parsed.faq ?? [];
 }
 
@@ -120,14 +157,19 @@ export async function generateMultiLangSEO(
     label: 'facts',
     jsonMode: true,
   });
-  const analysisData = safeJsonParse<{
+  const { value: analysisData } = await robustJsonParse<{
     core_facts: string[];
     key_entities: Array<{
       name: string;
       type: 'tool' | 'concept' | 'person' | 'company' | 'technology';
       description?: string;
     }>;
-  }>(analysisResult.text, { projectId, operation: 'contentAnalysis' });
+  }>(analysisResult.text, {
+    projectId,
+    operation: 'contentAnalysis',
+    fallback: { core_facts: [], key_entities: [] },
+    retry: correctiveRetry(provider, analyst.system, analyst.user, { projectId, label: 'facts', priority: 'high' }),
+  });
   const core_facts = analysisData.core_facts ?? [];
   const key_entities = analysisData.key_entities ?? [];
   const factsText = core_facts.join('\n');
@@ -159,7 +201,14 @@ export async function generateMultiLangSEO(
     label: 'tags',
     jsonMode: true,
   });
-  const llmTags = safeJsonParse<{ tags: string[] }>(tagRes.text, { projectId, operation: 'tagSuggest' }).tags ?? [];
+  // Tags are supplementary (deterministic core tags already cover the koan), so
+  // a parse failure just contributes nothing — no retry, straight to empty.
+  const { value: tagParsed } = await robustJsonParse<{ tags: string[] }>(tagRes.text, {
+    projectId,
+    operation: 'tagSuggest',
+    fallback: { tags: [] },
+  });
+  const llmTags = tagParsed.tags ?? [];
   const tags = buildTags(koan, [...allTrends.map((t) => t.keyword), ...llmTags]);
 
   const hashtags = ['极客禅', 'GeekZen', '禅宗', '公案', koan.csConceptEn.replace(/\s+/g, '')].filter(Boolean);
@@ -190,9 +239,18 @@ export async function generateMultiLangSEO(
       label: `title:${locale}`,
       jsonMode: true,
     });
-    const hook = (
-      safeJsonParse<{ hook: string }>(hookRes.text, { projectId, operation: `titleHook:${locale}` }).hook ?? ''
-    ).trim();
+    const { value: hookParsed } = await robustJsonParse<{ hook: string }>(hookRes.text, {
+      projectId,
+      operation: `titleHook:${locale}`,
+      // Empty hook still yields a usable title: " | 中文名 | CS Concept".
+      fallback: { hook: '' },
+      retry: correctiveRetry(provider, hookPrompt.system, hookPrompt.user, {
+        projectId,
+        label: `title:${locale}`,
+        priority: 'medium',
+      }),
+    });
+    const hook = (hookParsed.hook ?? '').trim();
     const title = `${hook} | ${koan.chineseName} | ${koan.csConceptEn}`;
 
     // Per-locale description hook (zh_TW Traditional vs zh_CN_XHS Simplified),
@@ -211,10 +269,18 @@ export async function generateMultiLangSEO(
       label: `description:${locale}`,
       jsonMode: true,
     });
-    const hookParagraph = safeJsonParse<{ hook_paragraph: string }>(
-      descHookRes.text,
-      { projectId, operation: `descriptionHook:${locale}` },
-    ).hook_paragraph ?? '';
+    const { value: descParsed } = await robustJsonParse<{ hook_paragraph: string }>(descHookRes.text, {
+      projectId,
+      operation: `descriptionHook:${locale}`,
+      // Empty hook paragraph still renders the templated description body.
+      fallback: { hook_paragraph: '' },
+      retry: correctiveRetry(provider, descHook.system, descHook.user, {
+        projectId,
+        label: `description:${locale}`,
+        priority: 'medium',
+      }),
+    });
+    const hookParagraph = descParsed.hook_paragraph ?? '';
 
     const description = renderDescription({
       locale,

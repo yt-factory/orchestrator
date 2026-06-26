@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'fs/promises';
 import { logger } from '../utils/logger';
 import type { BaseLLMProvider } from '../llm/providers';
 import { loadPrompt } from '../llm/prompts/loader';
+import { safeJsonParse } from '../utils/json-parse';
 
 const CACHE_TTL_HOURS = 6;
 const DECAY_THRESHOLD_HOURS = 24;
@@ -196,7 +197,7 @@ export class TrendsHook {
         jsonMode: true,
       });
 
-      const parsed = JSON.parse(result.text);
+      const parsed = safeJsonParse<{ keywords?: unknown }>(result.text, { projectId, operation: 'trends' });
       const keywords = parsed.keywords;
 
       if (!Array.isArray(keywords)) {

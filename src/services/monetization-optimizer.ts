@@ -1,6 +1,7 @@
 import { MonetizationInfo } from '../core/manifest';
 import type { BaseLLMProvider } from '../llm/providers';
 import { logger } from '../utils/logger';
+import { safeJsonParse } from '../utils/json-parse';
 
 // Configuration thresholds
 const MIN_SCORE_TO_PROCEED = 60;
@@ -328,7 +329,7 @@ If content appears safe, return empty risks array with overall_risk: 0.
         priority: 'medium'
       });
 
-      return JSON.parse(result.text);
+      return safeJsonParse(result.text, { projectId, operation: 'monetizationAnalysis' });
     } catch (error) {
       logger.warn('AI content analysis failed', {
         projectId,
