@@ -21,45 +21,78 @@ export type ParseResult =
   | { ok: true; koan: ParsedKoan; warnings: string[] }
   | { ok: false; sourceFile: string; reason: string; rawH1?: string; rawH2?: string };
 
+// Ones-place characters, incl. 零 placeholder, 两 variants, and financial forms.
 const CN_DIGITS: Record<string, number> = {
+  零: 0, '〇': 0, '○': 0,
   一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9,
+  两: 2, 兩: 2,
+  壹: 1, 貳: 2, 參: 3, 肆: 4, 伍: 5, 陸: 6, 柒: 7, 捌: 8, 玖: 9,
 };
 
-/** Convert a Chinese numeral (一-九百九十九 range) to an integer. */
-export function parseChineseNumber(input: string): number {
+// Multiplier units, incl. financial forms (拾/佰/仟).
+const CN_UNITS: Record<string, number> = {
+  十: 10, 拾: 10,
+  百: 100, 佰: 100,
+  千: 1000, 仟: 1000,
+};
+
+/**
+ * Convert a Chinese numeral string to an integer (1-9999 range).
+ *
+ * Handles the 零 placeholder pattern (一百零一 = 101, 一千零八十 = 1080),
+ * bare units (十 = 10, 一百 = 100), and financial characters (壹佰零壹 = 101).
+ *
+ * Returns `null` — never a silent 0 — for empty, malformed, or
+ * unknown-character input. A bare 零 or stray character must NOT masquerade
+ * as a valid number: silent-wrong is worse than a loud reject.
+ */
+export function parseChineseNumber(input: string): number | null {
+  if (!input) return null;
+  if (/^\d+$/.test(input)) return parseInt(input, 10); // arabic passthrough
+
   let total = 0;
   let section = 0;
+  let sawNumeral = false;
   for (const ch of input) {
     const digit = CN_DIGITS[ch];
     if (digit !== undefined) {
       section = digit;
-    } else if (ch === '十') {
-      section = (section === 0 ? 1 : section) * 10;
-      total += section;
-      section = 0;
-    } else if (ch === '百') {
-      section = (section === 0 ? 1 : section) * 100;
-      total += section;
-      section = 0;
-    } else if (ch === '千') {
-      section = (section === 0 ? 1 : section) * 1000;
-      total += section;
-      section = 0;
+      sawNumeral = true;
+      continue;
     }
+    const unit = CN_UNITS[ch];
+    if (unit === undefined) return null; // unknown character → reject, not skip
+    // Bare/leading unit (十一 = 11, 一百 vs 百): treat a zero section as 1 * unit.
+    section = (section === 0 ? 1 : section) * unit;
+    total += section;
+    section = 0;
+    sawNumeral = true;
   }
-  return total + section;
+
+  const result = total + section;
+  return sawNumeral && result > 0 ? result : null;
 }
+
+// Numeral character class kept in lockstep with the DIGITS/UNITS tables so the
+// extraction regex can never drift out of sync with what the converter knows.
+// (The original ep101 blocker was exactly this drift: 零 was in neither, and the
+// regex class silently truncated 「一百零一」 before parseChineseNumber ran.)
+const CN_NUMERAL_CLASS = [...Object.keys(CN_DIGITS), ...Object.keys(CN_UNITS)].join('');
+const CHINESE_EPISODE_RE = new RegExp(`第\\s*([${CN_NUMERAL_CLASS}]+)\\s*[则則]`);
 
 const COLON = /[：:︰]/; // fullwidth, ASCII, CJK presentation-form
 const OPEN_BRACKET = '（(［〔';
 const CLOSE_BRACKET = '）)］〕';
 const KOAN_H2 = new RegExp(`^公案${COLON.source}`);
 
-function extractEpisodeNumber(h1: string): number | null {
+export function extractEpisodeNumber(h1: string): number | null {
   const arabic = h1.match(/第\s*(\d+)\s*[则則]/);
   if (arabic) return parseInt(arabic[1]!, 10);
-  const chinese = h1.match(/第\s*([一二三四五六七八九十百千]+)\s*[则則]/);
-  if (chinese) return parseChineseNumber(chinese[1]!);
+  const chinese = h1.match(CHINESE_EPISODE_RE);
+  if (chinese) {
+    const n = parseChineseNumber(chinese[1]!);
+    if (n !== null) return n; // fall through to latin form if numerals are unparseable
+  }
   const latin = h1.match(/[Ee][Pp]\s*(\d+)/);
   if (latin) return parseInt(latin[1]!, 10);
   return null;

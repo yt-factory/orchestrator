@@ -198,6 +198,29 @@ ContentPlan, ShortsCandidate) are unreachable from `ProjectManifestSchema`.
 > as a prompt-drift signal. Needs `projectId` threaded into the parse path for
 > per-run attribution, so it's left as a seam rather than built now.
 
+### Derived character classes for text extraction
+
+Character classes in regexes that parse LLM- or human-authored text should be
+**derived from the canonical data structure they parse, not hand-listed.**
+Hand-listed classes drift out of sync with the parser silently, and the failure
+is invisible until an input exercises the gap.
+
+Concrete case: `extractEpisodeNumber` (`src/parsers/koan.ts`) matched Chinese
+episode numerals with a hand-listed class `[一二三四五六七八九十百千]`, while the
+converter's `CN_DIGITS` table separately knew `零`. `parseChineseNumber` handled
+`一百零一` → 101 correctly, but the regex truncated `「一百零一」` at the unknown `零`
+and rejected the H1 *before the converter ever ran* — "no episode number in H1".
+This blocked every 零-placeholder episode (ep101-109, 201-209, …) and stayed
+hidden through ep1-100 because none of them contain `零`.
+
+**Fix:** the class is now built from the parser's own keys —
+`CN_NUMERAL_CLASS = [...Object.keys(CN_DIGITS), ...Object.keys(CN_UNITS)]` — so the
+regex can never know fewer characters than the converter. Add a numeral variant
+to one table and both extraction and conversion pick it up together.
+
+Same class of defense as the schema-helpers above: eliminate the silent-drift
+seam structurally rather than trusting two lists to stay hand-synced.
+
 ### JSON parse defense (Layer 3 for LLM unpredictability)
 
 The schema-helpers above are **Layer 1/2** defenses — they coerce *parsed objects*.
