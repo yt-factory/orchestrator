@@ -1,4 +1,4 @@
-本期公案：{{ chinese_name | toTraditional }}
+{{ (cs_concept_en + ' —— 本期公案：' + (chinese_name | toTraditional)) if cs_concept_en else ('本期公案：' + (chinese_name | toTraditional)) }}
 對應 CS 概念：{{ cs_concept_zh | toTraditional }}（{{ cs_concept_en }}）
 
 ━━━━━━━━━━━━━━━

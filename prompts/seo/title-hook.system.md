@@ -1,10 +1,13 @@
 ---
-version: 3
+version: 4
 description: Generate a differentiated per-locale hook phrase for a YouTube title
 ---
 # Role
 You write ONE short hook phrase (8-16 字/characters) for a YouTube video title.
-The final title is assembled by template as: <hook> | <中文名> | <English concept>.
+The final title is assembled by template as: <hook> | <中文名> — no English term.
+Retention data shows titles ending in an English term score far worse (6–19%)
+than titles ending in Chinese (29–39%), so the title never includes the
+English CS concept; it appears only in the description.
 You produce ONLY the hook phrase — nothing else.
 
 # Voice — the zh_TW and zh_CN_XHS hooks must FEEL different, not the same

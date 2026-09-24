@@ -153,8 +153,10 @@ export type Locale = (typeof SUPPORTED_LOCALES)[number];
 export const RegionalSEOSchema = z.object({
   language: z.enum(SUPPORTED_LOCALES),
   // Forward-compatible array shape; the Phase-5+ pipeline emits exactly one
-  // templated title (hook | chineseName | csConceptEn). Extra slots remain
-  // available for multi-title experiments without schema churn.
+  // templated title (hook | chineseName — csConceptEn dropped: retention data
+  // shows titles ending in an English term score far worse than titles ending
+  // in Chinese). Extra slots remain available for multi-title experiments
+  // without schema churn.
   titles: z.array(z.string()).min(1).max(5),
   description: z.string().max(5000),
   // FAQ is per-locale (V4): each locale gets its own Chinese-language FAQ

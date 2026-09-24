@@ -35,4 +35,52 @@ describe('renderDescription', () => {
     const xhs = renderDescription({ locale: 'zh_CN_XHS', ...common });
     expect(tw).not.toBe(xhs);
   });
+
+  describe('first line — cs_concept_en lead-in', () => {
+    test('zh_TW: first line is "{en} —— 本期公案：{name}" when csConceptEn is present', () => {
+      const out = renderDescription({ locale: 'zh_TW', ...common });
+      expect(out.split('\n')[0]).toBe('Space-Time Tradeoff —— 本期公案：空間換時間');
+    });
+
+    test('zh_CN_XHS: first line is "{en} —— 本期公案：{name}" when csConceptEn is present', () => {
+      const out = renderDescription({ locale: 'zh_CN_XHS', ...common });
+      expect(out.split('\n')[0]).toBe('Space-Time Tradeoff —— 本期公案：空间换时间');
+    });
+
+    test('zh_TW: falls back to "本期公案：{name}" with no dangling " —— " when csConceptEn is empty', () => {
+      const out = renderDescription({
+        locale: 'zh_TW',
+        ...common,
+        koan: { ...koan, csConceptEn: '' },
+      });
+      const firstLine = out.split('\n')[0];
+      expect(firstLine).toBe('本期公案：空間換時間');
+      expect(firstLine).not.toContain('——');
+    });
+
+    test('zh_CN_XHS: falls back to "本期公案：{name}" with no dangling " —— " when csConceptEn is empty', () => {
+      const out = renderDescription({
+        locale: 'zh_CN_XHS',
+        ...common,
+        koan: { ...koan, csConceptEn: '' },
+      });
+      const firstLine = out.split('\n')[0];
+      expect(firstLine).toBe('本期公案：空间换时间');
+      expect(firstLine).not.toContain('——');
+    });
+
+    test('rest of the template is unchanged (only the first line differs)', () => {
+      const withEn = renderDescription({ locale: 'zh_TW', ...common });
+      const withoutEn = renderDescription({
+        locale: 'zh_TW',
+        ...common,
+        koan: { ...koan, csConceptEn: '' },
+      });
+      const restWithEn = withEn.split('\n').slice(2).join('\n');
+      const restWithoutEn = withoutEn.split('\n').slice(2).join('\n');
+      // Line 1 (cs_concept_zh) still embeds csConceptEn in parens, so compare
+      // from line 3 onward, which is fully independent of csConceptEn.
+      expect(restWithEn).toBe(restWithoutEn);
+    });
+  });
 });

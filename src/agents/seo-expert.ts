@@ -44,18 +44,29 @@ function correctiveRetry(
 //
 // Locales are SUPPORTED_LOCALES (zh_TW, zh_CN_XHS) from the manifest schema.
 
-function validateTrendCoverage(
-  titles: string[],
+// Checks established-trend keyword coverage against arbitrary rendered text
+// (title, description first line, etc.) — case-insensitive substring match.
+// Exported for direct unit testing.
+export function validateTrendCoverage(
+  texts: string[],
   establishedTrends: string[],
 ): { valid: boolean; missingTrends: string[] } {
   if (establishedTrends.length === 0) {
     return { valid: true, missingTrends: [] };
   }
-  const titlesLower = titles.map((t) => t.toLowerCase()).join(' ');
+  const textLower = texts.map((t) => t.toLowerCase()).join(' ');
   const missingTrends = establishedTrends.filter(
-    (trend) => !titlesLower.includes(trend.toLowerCase()),
+    (trend) => !textLower.includes(trend.toLowerCase()),
   );
   return { valid: missingTrends.length === 0, missingTrends };
+}
+
+// Assembles the YouTube title from the LLM hook + koan Chinese name.
+// Retention data: titles ending in an English term score far worse (6–19%)
+// than titles ending in Chinese (29–39%) — csConceptEn is deliberately
+// dropped from the title. Exported for direct unit testing.
+export function buildKoanTitle(hook: string, chineseName: string): string {
+  return hook ? `${hook} | ${chineseName}` : chineseName;
 }
 
 async function extractPrimaryTopic(
@@ -242,7 +253,7 @@ export async function generateMultiLangSEO(
     const { value: hookParsed } = await robustJsonParse<{ hook: string }>(hookRes.text, {
       projectId,
       operation: `titleHook:${locale}`,
-      // Empty hook still yields a usable title: " | 中文名 | CS Concept".
+      // Empty hook still yields a usable title: chineseName alone (no leading " | ").
       fallback: { hook: '' },
       retry: correctiveRetry(provider, hookPrompt.system, hookPrompt.user, {
         projectId,
@@ -251,7 +262,7 @@ export async function generateMultiLangSEO(
       }),
     });
     const hook = (hookParsed.hook ?? '').trim();
-    const title = `${hook} | ${koan.chineseName} | ${koan.csConceptEn}`;
+    const title = buildKoanTitle(hook, koan.chineseName);
 
     // Per-locale description hook (zh_TW Traditional vs zh_CN_XHS Simplified),
     // generated per locale — not shared (fix for the commit-10 reuse bug).
@@ -289,6 +300,10 @@ export async function generateMultiLangSEO(
       chapters,
       hashtags,
     });
+    // Trend keywords can land in the description's opening line (which now
+    // carries the CS concept) instead of the trimmed-down title, so coverage
+    // is checked against both, not the title alone.
+    const descriptionFirstLine = description.split('\n')[0] ?? '';
 
     // Per-locale FAQ — Chinese in the locale's script (was top-level English).
     const faq = await generateFAQ(provider, projectId, core_facts, locale);
@@ -298,7 +313,10 @@ export async function generateMultiLangSEO(
       titles: [title],
       description,
       faq,
-      contains_established_trend: validateTrendCoverage([title], establishedTrends).valid,
+      contains_established_trend: validateTrendCoverage(
+        [title, descriptionFirstLine],
+        establishedTrends,
+      ).valid,
     });
   }
 
