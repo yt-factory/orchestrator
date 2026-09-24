@@ -8,6 +8,7 @@ import { loadPrompt } from '../llm/prompts/loader';
 import { renderDescription } from '../seo/description';
 import { extractChapters } from '../seo/chapters';
 import { buildTags, CORE_STATIC_TAGS } from '../seo/tags';
+import { pickTitleTerms, type TitleTermInput } from '../seo/title-terms';
 import { logger } from '../utils/logger';
 import { robustJsonParse } from '../utils/json-parse';
 
@@ -61,12 +62,18 @@ export function validateTrendCoverage(
   return { valid: missingTrends.length === 0, missingTrends };
 }
 
-// Assembles the YouTube title from the LLM hook + koan Chinese name.
-// Retention data: titles ending in an English term score far worse (6–19%)
-// than titles ending in Chinese (29–39%) — csConceptEn is deliberately
-// dropped from the title. Exported for direct unit testing.
-export function buildKoanTitle(hook: string, chineseName: string): string {
-  return hook ? `${hook} | ${chineseName}` : chineseName;
+// Assembles the YouTube title from the LLM hook + a koan-derived Chinese
+// term. Retention data: titles ending in an English term score far worse
+// (6–19%) than titles ending in Chinese (29–39%), so the term is picked via
+// pickTitleTerms() (last-character-is-CJK check) rather than trusting which
+// parsed field happens to hold Chinese — H1/H2 authors don't agree on which
+// side of the koan heading carries which script (see ep116, ep140).
+// Exported for direct unit testing.
+export function buildKoanTitle(hook: string, koan: TitleTermInput): string {
+  // Titles must not end in English: with no CJK-ending term, the hook stands alone.
+  const { zh } = pickTitleTerms(koan);
+  if (hook && zh) return `${hook} | ${zh}`;
+  return hook || zh || koan.chineseName;
 }
 
 async function extractPrimaryTopic(
@@ -262,7 +269,7 @@ export async function generateMultiLangSEO(
       }),
     });
     const hook = (hookParsed.hook ?? '').trim();
-    const title = buildKoanTitle(hook, koan.chineseName);
+    const title = buildKoanTitle(hook, koan);
 
     // Per-locale description hook (zh_TW Traditional vs zh_CN_XHS Simplified),
     // generated per locale — not shared (fix for the commit-10 reuse bug).

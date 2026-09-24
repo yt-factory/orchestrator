@@ -83,4 +83,44 @@ describe('renderDescription', () => {
       expect(restWithEn).toBe(restWithoutEn);
     });
   });
+
+  // H1/H2 authors don't agree on which field holds Chinese vs. English —
+  // line 1 must pick by script (pickTitleTerms), not by field name.
+  describe('first line — script-agnostic term picking (ep116/ep140/ep108-style koans)', () => {
+    test('ep140-style: chineseName is English, csConceptEn bracket is actually Chinese', () => {
+      const ep140Koan = { chineseName: 'Keep-Alive', csConceptZh: 'Keep-Alive', csConceptEn: '保活' };
+      const out = renderDescription({ locale: 'zh_CN_XHS', ...common, koan: ep140Koan });
+      expect(out.split('\n')[0]).toBe('Keep-Alive —— 本期公案：保活');
+    });
+
+    test('ep116-style: csConceptZh/csConceptEn reversed from convention', () => {
+      const ep116Koan = { chineseName: 'SLO', csConceptZh: 'SLO', csConceptEn: '服务水平目标' };
+      const out = renderDescription({ locale: 'zh_CN_XHS', ...common, koan: ep116Koan });
+      expect(out.split('\n')[0]).toBe('SLO —— 本期公案：服务水平目标');
+    });
+
+    test('ep108-style: no bracket in H2, csConceptEn empty, falls back to csConceptZh for the term', () => {
+      const ep108Koan = { chineseName: 'Sidecar', csConceptZh: 'Sidecar模式', csConceptEn: '' };
+      const out = renderDescription({ locale: 'zh_CN_XHS', ...common, koan: ep108Koan });
+      expect(out.split('\n')[0]).toBe('Sidecar —— 本期公案：Sidecar模式');
+    });
+
+    test('ep106-style: csConceptZh/csConceptEn reversed from convention', () => {
+      const ep106Koan = { chineseName: 'CQRS', csConceptZh: 'CQRS', csConceptEn: '命令查询分离' };
+      const out = renderDescription({ locale: 'zh_CN_XHS', ...common, koan: ep106Koan });
+      expect(out.split('\n')[0]).toBe('CQRS —— 本期公案：命令查询分离');
+    });
+
+    test('ep115-style (zh_TW): well-formed koan renders Traditional on the 本期公案 term', () => {
+      const ep115Koan = { chineseName: '告警疲劳', csConceptZh: '告警疲劳', csConceptEn: 'Alert Fatigue' };
+      const out = renderDescription({ locale: 'zh_TW', ...common, koan: ep115Koan });
+      expect(out.split('\n')[0]).toBe('Alert Fatigue —— 本期公案：告警疲勞');
+    });
+
+    test('no CJK anywhere: title term is empty, falls back to chinese_name for the 本期公案 part', () => {
+      const noCjkKoan = { chineseName: 'Foo', csConceptZh: 'Foo', csConceptEn: 'Bar' };
+      const out = renderDescription({ locale: 'zh_CN_XHS', ...common, koan: noCjkKoan });
+      expect(out.split('\n')[0]).toBe('Bar —— 本期公案：Foo');
+    });
+  });
 });
